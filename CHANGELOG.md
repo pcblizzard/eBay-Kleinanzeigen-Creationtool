@@ -6,7 +6,8 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 
 ### Geändert
 
-- Die Einstellungen befinden sich jetzt oberhalb der Produktsuche.
+- Die Einstellungen wurden vollständig aus den Beitrags-Tabs entfernt und
+  sind über das obere Menü in einem eigenen Dialog erreichbar.
 - Ein Sprachwechsel erzeugt den aktuellen Verkaufsentwurf neu und übersetzt
   Oberfläche, Vorlagen sowie bekannte strukturierte Metadatenfelder.
 - Der verbindliche deutsche Privatverkaufstext bleibt unabhängig von der

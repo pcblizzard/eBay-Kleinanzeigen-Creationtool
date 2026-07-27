@@ -59,6 +59,7 @@ TRANSLATIONS = {
         "saved_success": "Datei erfolgreich gespeichert:",
         "font_size_label": "Schriftgröße:",
         "menu_settings": "Einstellungen",
+        "menu_open_settings": "Einstellungen öffnen…",
         "menu_change_save_path": "Speicherpfad ändern",
         "menu_default_save_path": "Standard-Speicherort wählen",
         "save_error": "Fehler beim Speichern:",
@@ -107,6 +108,7 @@ TRANSLATIONS = {
         "saved_success": "File saved successfully:",
         "font_size_label": "Font size:",
         "menu_settings": "Options",
+        "menu_open_settings": "Open settings…",
         "menu_change_save_path": "Change save path",
         "menu_default_save_path": "Select default save location",
         "save_error": "Error saving file:",
@@ -852,15 +854,9 @@ class ProductGeneratorGUI:
         )
         self.close_button.pack(side=tk.RIGHT, padx=5)
 
-        # Einstellungen gehören an den Anfang des Arbeitsbereichs.
+        # Die Konfiguration wird im Tabbed-Modus nur über den separaten
+        # Einstellungsdialog angezeigt.
         self.options_frame.pack_forget()
-        self.options_frame.pack(
-            fill=tk.X,
-            expand=False,
-            padx=10,
-            pady=10,
-            before=self.search_frame,
-        )
         
         self.status_var = tk.StringVar(value=trans['status_ready'])
         status_bar = ttk.Label(
@@ -2305,21 +2301,13 @@ class TabbedProductGeneratorGUI:
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
 
         self.menubar = tk.Menu(root)
-        self.settings_menu = tk.Menu(self.menubar, tearoff=0)
-        self.settings_menu.add_command(
-            label=TRANSLATIONS['de']['menu_change_save_path'],
-            command=lambda: self.run_on_active('change_save_path'),
-        )
-        self.settings_menu.add_command(
-            label=TRANSLATIONS['de']['menu_default_save_path'],
-            command=lambda: self.run_on_active('set_default_save_path'),
-        )
-        self.menubar.add_cascade(
+        self.menubar.add_command(
             label=TRANSLATIONS['de']['menu_settings'],
-            menu=self.settings_menu,
+            command=self.open_settings,
         )
         root.config(menu=self.menubar)
         self.notebook.bind('<<NotebookTabChanged>>', self.on_tab_changed)
+        self.settings_window = None
         self.add_tab()
 
     def update_chrome_language(self, language):
@@ -2327,13 +2315,123 @@ class TabbedProductGeneratorGUI:
         self.root.title(trans['title'])
         self.new_tab_button.config(text=trans['new_tab'])
         self.close_tab_button.config(text=trans['close_tab'])
-        self.settings_menu.entryconfig(
-            0, label=trans['menu_change_save_path']
-        )
-        self.settings_menu.entryconfig(
-            1, label=trans['menu_default_save_path']
-        )
         self.menubar.entryconfig(0, label=trans['menu_settings'])
+
+    def open_settings(self):
+        """Zeigt die Konfiguration des aktiven Beitrags separat an."""
+        controller = self.active_controller()
+        if not controller:
+            return
+        if self.settings_window and self.settings_window.winfo_exists():
+            self.settings_window.destroy()
+
+        trans = TRANSLATIONS[controller.language]
+        window = tk.Toplevel(self.root)
+        self.settings_window = window
+        window.title(trans['options_frame'])
+        window.transient(self.root)
+        window.resizable(True, False)
+        window.protocol("WM_DELETE_WINDOW", window.destroy)
+
+        content = ttk.Frame(window, padding=14)
+        content.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            content, text=trans['path_label'], font=("Segoe UI", 9, "bold")
+        ).pack(anchor=tk.W)
+        ttk.Label(
+            content, text=controller.save_path, foreground="#1a73e8"
+        ).pack(anchor=tk.W, fill=tk.X, pady=(2, 8))
+
+        path_buttons = ttk.Frame(content)
+        path_buttons.pack(fill=tk.X, pady=(0, 12))
+        ttk.Button(
+            path_buttons,
+            text=trans['menu_change_save_path'],
+            command=lambda: self._settings_path_action(
+                controller, 'change_save_path'
+            ),
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(
+            path_buttons,
+            text=trans['menu_default_save_path'],
+            command=lambda: self._settings_path_action(
+                controller, 'set_default_save_path'
+            ),
+        ).pack(side=tk.LEFT)
+
+        language_row = ttk.Frame(content)
+        language_row.pack(fill=tk.X, pady=(0, 12))
+        ttk.Label(language_row, text=trans['language_label']).pack(side=tk.LEFT)
+
+        def change_language(value):
+            controller.on_language_changed(value)
+            window.destroy()
+            self.open_settings()
+
+        ttk.OptionMenu(
+            language_row,
+            controller.language_var,
+            controller.language,
+            "de",
+            "en",
+            command=change_language,
+        ).pack(side=tk.LEFT, padx=10)
+
+        providers = ttk.LabelFrame(
+            content, text=trans['provider_frame'], padding=8
+        )
+        providers.pack(fill=tk.X, pady=(0, 12))
+        for name, (_, label_key) in controller.provider_buttons.items():
+            tk.Checkbutton(
+                providers,
+                text=trans[label_key],
+                variable=controller.provider_vars[name],
+                command=controller.save_config,
+                anchor=tk.W,
+                borderwidth=0,
+                highlightthickness=0,
+            ).pack(side=tk.LEFT, padx=(0, 14))
+
+        font_row = ttk.Frame(content)
+        font_row.pack(fill=tk.X, pady=(0, 12))
+        ttk.Label(font_row, text=trans['font_size_label']).pack(side=tk.LEFT)
+        font_spinbox = ttk.Spinbox(
+            font_row,
+            from_=8,
+            to=18,
+            increment=1,
+            textvariable=controller.font_size_var,
+            width=5,
+            command=controller.on_font_size_changed,
+        )
+        font_spinbox.pack(side=tk.LEFT, padx=10)
+        font_spinbox.bind(
+            '<Return>', lambda event: controller.on_font_size_changed()
+        )
+        font_spinbox.bind(
+            '<FocusOut>', lambda event: controller.on_font_size_changed()
+        )
+
+        actions = ttk.Frame(content)
+        actions.pack(fill=tk.X)
+        ttk.Button(
+            actions, text=trans['save_button'], command=controller.save_file
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            actions, text=trans['close_button'], command=window.destroy
+        ).pack(side=tk.RIGHT)
+
+        window.update_idletasks()
+        window.minsize(max(650, window.winfo_reqwidth()), window.winfo_reqheight())
+        window.grab_set()
+        window.focus_set()
+
+    def _settings_path_action(self, controller, method_name):
+        getattr(controller, method_name)()
+        if self.settings_window and self.settings_window.winfo_exists():
+            self.settings_window.destroy()
+        self.open_settings()
 
     def on_tab_changed(self, *args):
         controller = self.active_controller()
