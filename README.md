@@ -27,6 +27,9 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 - ✅ **Kleinanzeigen-Livesuche**: Optionale Inseratsuche über Kleinanzeigen Agent
 - ✅ **eBay-Livesuche**: Optionale Produktsuche über die offizielle eBay Browse API
 - ✅ **Sichere API-Zugangsdaten**: Speicherung im Betriebssystem-Schlüsselspeicher
+- ✅ **Sicherheitskontrollen**: Keyring-Prüfung, Verbindungstests und Secret-Löschung
+- ✅ **Geschützte Webimporte**: Größenlimits und Sperre lokaler Netzwerkziele
+- ✅ **Security-CI**: Abhängigkeits- und Secret-Scans bei jedem Push
 
 ## Installation
 
@@ -142,6 +145,39 @@ Kleinanzeigen Agent dokumentiert keine Funktion zum Veröffentlichen eigener
 Anzeigen. Das Einstellen auf eBay würde zusätzlich einen Benutzer-OAuth-Flow,
 Versand-/Zahlungsrichtlinien und weitere Pflichtangaben benötigen und ist noch
 nicht aktiviert.
+
+## Sicherheit
+
+Die Anwendung akzeptiert für Zugangsdaten ausschließlich ein geeignetes
+Betriebssystem-Keyring. Unter Windows muss der Windows Credential Locker aktiv
+sein; Null-, Fail- oder unverschlüsselte Backends werden abgewiesen. Im
+Einstellungsdialog können Zugangsdaten ersetzt, getestet und vollständig aus dem
+Keyring gelöscht werden. Der Kleinanzeigen-Verbindungstest führt eine minimale
+Live-Suche aus und verbraucht dabei einen Credit.
+
+Für eBay kann getrennt zwischen `sandbox` und `production` gewählt werden.
+Application-Tokens bleiben nur im Arbeitsspeicher. Sicherheitsrelevante Aktionen
+werden ohne Schlüssel, Tokens oder API-Antworten in
+`~/.eBayCreationToolSecurity.log` protokolliert.
+
+Die Sitzungswiederherstellung kann abgeschaltet werden. Optional löscht die App
+beim Beenden die lokale Sitzungsdatei. Importierte Produktlinks dürfen nur HTTP
+oder HTTPS verwenden; direkte Zugriffe auf lokale beziehungsweise private
+IP-Adressen werden blockiert. Textantworten sind auf 5 MB, Bilder auf 15 MB und
+50 Megapixel begrenzt.
+
+GitHub Actions führt zusätzlich `pip-audit` und Gitleaks aus. Dependabot prüft
+wöchentlich Python- und GitHub-Actions-Abhängigkeiten. Lokal lässt sich der Audit
+mit Python 3.14 starten:
+
+```powershell
+py -3.14 -m pip install pip-audit
+py -3.14 -m pip_audit .
+```
+
+Bei der derzeitigen Python-3.15-Vorabversion kann die Installation unter Windows
+scheitern, solange für die indirekte Abhängigkeit `msgpack` kein passendes Wheel
+vorliegt. Das betrifft die Entwicklungsprüfung, nicht die Anwendung.
 
 Amazon.de, Geizhals und Idealo sind experimentelle HTML-Provider. Amazon liefert
 Suchtreffer und – soweit zugänglich – Stichpunkte und technische Fakten der

@@ -2,6 +2,18 @@
 
 ## Unveröffentlicht
 
+- Sicheren Keyring-Backend-Check ergänzt; unsichere oder fehlende Backends
+  werden für die Secret-Speicherung abgewiesen.
+- Zugangsdaten können im Einstellungsdialog getestet, ersetzt und gelöscht
+  werden.
+- eBay Sandbox und Production sind als getrennte Umgebungen auswählbar.
+- Metadatenbasiertes Sicherheitsprotokoll ohne Secrets oder API-Inhalte ergänzt.
+- Sitzungswiederherstellung kann deaktiviert und die Sitzungsdatei beim Beenden
+  automatisch gelöscht werden.
+- Webimporte blockieren lokale/private IP-Ziele und begrenzen Text-, Bild- und
+  Pixelgrößen.
+- GitHub Actions führt jetzt `pip-audit` und Gitleaks aus; Dependabot überwacht
+  Python- und Actions-Abhängigkeiten.
 - Kleinanzeigen Agent als optionale Live-Quelle für öffentliche Inserate,
   Kategorien und strukturierte Merkmale ergänzt.
 - eBay.de über die offizielle Browse API mit Stichwort- und GTIN-Suche ergänzt.

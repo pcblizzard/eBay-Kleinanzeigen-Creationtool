@@ -41,3 +41,6 @@ product_listings/
 # Environment variables
 .env
 .env.local
+.eBayCreationToolConfig.json
+.eBayCreationToolSession.json
+.eBayCreationToolSecurity.log

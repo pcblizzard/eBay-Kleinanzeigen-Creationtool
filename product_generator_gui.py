@@ -15,6 +15,7 @@ from datetime import datetime
 import difflib
 import copy
 import html as html_lib
+import ipaddress
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import tkinter as tk
@@ -38,6 +39,8 @@ except ImportError:
 WARRANTY_CLAUSE = """Privatverkauf. Die Ware wird unter Ausschluss der Sachmängelhaftung nach § 475 BGB verkauft. Ausgeschlossen ist jede Gewährleistung für Sachmängel. Die Haftung für arglistig verschwiegene Mängel sowie für Schäden aus der Verletzung von Leben, Körper oder Gesundheit bleibt unberührt."""
 
 SECRET_SERVICE = "eBay-Kleinanzeigen-Creationtool"
+MAX_TEXT_RESPONSE_BYTES = 5 * 1024 * 1024
+MAX_IMAGE_RESPONSE_BYTES = 15 * 1024 * 1024
 
 TRANSLATIONS = {
     "de": {
@@ -99,6 +102,19 @@ TRANSLATIONS = {
         "ebay_client_secret": "eBay Client-Secret (Cert-ID):",
         "secret_hint": "Leer lassen, um bereits gespeicherte Zugangsdaten beizubehalten.",
         "secret_store_error": "Der sichere Betriebssystem-Schlüsselspeicher ist nicht verfügbar.",
+        "secret_saved_status": "Gespeichert",
+        "secret_missing_status": "Nicht eingerichtet",
+        "secret_test": "Verbindung testen",
+        "secret_delete": "Zugangsdaten löschen",
+        "secret_delete_confirm": "Gespeicherte Zugangsdaten wirklich löschen?",
+        "secret_test_success": "Verbindung erfolgreich getestet.",
+        "secret_test_failed": "Verbindungstest fehlgeschlagen:",
+        "ebay_environment": "eBay-Umgebung:",
+        "ebay_production": "Production (echte Daten)",
+        "ebay_sandbox": "Sandbox (Testdaten)",
+        "session_frame": "Datenschutz und Sitzung",
+        "session_restore": "Offene Tabs und Entwürfe wiederherstellen",
+        "session_clear_on_exit": "Sitzungsdatei beim Beenden löschen",
         "default_save_path_notice": "Standardpfad gespeichert",
         "config_load_error": "Fehler beim Laden der Konfiguration",
         "config_save_error": "Fehler beim Speichern der Konfiguration",
@@ -176,6 +192,19 @@ TRANSLATIONS = {
         "ebay_client_secret": "eBay client secret (Cert ID):",
         "secret_hint": "Leave blank to keep credentials that are already stored.",
         "secret_store_error": "The secure operating-system credential store is unavailable.",
+        "secret_saved_status": "Stored",
+        "secret_missing_status": "Not configured",
+        "secret_test": "Test connection",
+        "secret_delete": "Delete credentials",
+        "secret_delete_confirm": "Really delete the stored credentials?",
+        "secret_test_success": "Connection tested successfully.",
+        "secret_test_failed": "Connection test failed:",
+        "ebay_environment": "eBay environment:",
+        "ebay_production": "Production (live data)",
+        "ebay_sandbox": "Sandbox (test data)",
+        "session_frame": "Privacy and session",
+        "session_restore": "Restore open tabs and drafts",
+        "session_clear_on_exit": "Delete session file when exiting",
         "default_save_path_notice": "Default path saved",
         "config_load_error": "Error loading configuration",
         "config_save_error": "Error saving configuration",
@@ -618,6 +647,15 @@ class ProductGeneratorGUI:
         )
         self._ebay_access_token = None
         self._ebay_access_token_expires = 0
+        self.ebay_environment = config.get('ebay_environment', 'production')
+        if self.ebay_environment not in ('production', 'sandbox'):
+            self.ebay_environment = 'production'
+        self.restore_session_enabled = bool(
+            config.get('restore_session', True)
+        )
+        self.clear_session_on_exit = bool(
+            config.get('clear_session_on_exit', False)
+        )
         self.legal_clause = str(
             config.get('legal_clause', WARRANTY_CLAUSE)
         ).strip() or WARRANTY_CLAUSE
@@ -694,6 +732,9 @@ class ProductGeneratorGUI:
                 'font_size': self.font_size,
                 'save_path': self.save_path,
                 'legal_clause': self.legal_clause,
+                'ebay_environment': self.ebay_environment,
+                'restore_session': self.restore_session_enabled,
+                'clear_session_on_exit': self.clear_session_on_exit,
                 'providers': {
                     name: bool(variable.get())
                     for name, variable in getattr(self, 'provider_vars', {}).items()
@@ -716,18 +757,57 @@ class ProductGeneratorGUI:
         if environment_value:
             return environment_value
         try:
-            import keyring
+            keyring = ProductGeneratorGUI.secure_keyring()
             return keyring.get_password(SECRET_SERVICE, name) or ''
         except Exception:
             return ''
+
+    @staticmethod
+    def secure_keyring():
+        """Liefert nur einen echten Betriebssystem-Keyring, nie Plaintext."""
+        import keyring
+        backend = keyring.get_keyring()
+        module = backend.__class__.__module__.casefold()
+        class_name = backend.__class__.__name__.casefold()
+        unsafe_markers = ('null', 'fail', 'plaintext', 'unencrypted')
+        if any(marker in module or marker in class_name for marker in unsafe_markers):
+            raise RuntimeError(
+                f"Unsicheres Keyring-Backend: {backend.__class__.__name__}"
+            )
+        if os.name == 'nt' and 'keyring.backends.windows' not in module:
+            raise RuntimeError(
+                f"Kein Windows Credential Locker: {backend.__class__.__name__}"
+            )
+        return keyring
 
     @staticmethod
     def set_secret(name, value):
         """Speichert ein Secret verschlüsselt über den System-Keyring."""
         if not value:
             return
-        import keyring
+        keyring = ProductGeneratorGUI.secure_keyring()
         keyring.set_password(SECRET_SERVICE, name, value)
+
+    @staticmethod
+    def delete_secret(name):
+        keyring = ProductGeneratorGUI.secure_keyring()
+        try:
+            keyring.delete_password(SECRET_SERVICE, name)
+        except keyring.errors.PasswordDeleteError:
+            pass
+
+    @staticmethod
+    def audit_security_event(action, provider='', outcome='success'):
+        """Schreibt ausschließlich Metadaten, niemals Secrets oder Antworten."""
+        record = {
+            'timestamp': datetime.now().astimezone().isoformat(timespec='seconds'),
+            'action': re.sub(r'[^a-z0-9_.-]', '_', action.casefold())[:64],
+            'provider': re.sub(r'[^a-z0-9_.-]', '_', provider.casefold())[:32],
+            'outcome': 'success' if outcome == 'success' else 'failed',
+        }
+        path = Path.home() / ".eBayCreationToolSecurity.log"
+        with open(path, 'a', encoding='utf-8') as handle:
+            handle.write(json.dumps(record, ensure_ascii=True) + '\n')
     
     def setup_ui(self):
         """Erstellt die Benutzeroberfläche"""
@@ -1225,6 +1305,8 @@ class ProductGeneratorGUI:
                     return
                 image_data = self.fetch_binary(image_url)
                 image = Image.open(io.BytesIO(image_data))
+                if image.width * image.height > 50_000_000:
+                    raise ValueError("Produktbild überschreitet 50 Megapixel")
                 if image.mode not in ('RGB', 'RGBA'):
                     image = image.convert('RGB')
                 else:
@@ -1352,6 +1434,7 @@ class ProductGeneratorGUI:
         return ''
 
     def fetch_binary(self, url):
+        self.validate_remote_url(url)
         headers = {
             'User-Agent': (
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -1365,7 +1448,14 @@ class ProductGeneratorGUI:
         }
         request = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(request, timeout=20) as response:
-            return response.read()
+            self.validate_remote_url(response.geturl())
+            declared = int(response.headers.get('Content-Length') or 0)
+            if declared > MAX_IMAGE_RESPONSE_BYTES:
+                raise ValueError("Produktbild ist zu groß")
+            data = response.read(MAX_IMAGE_RESPONSE_BYTES + 1)
+            if len(data) > MAX_IMAGE_RESPONSE_BYTES:
+                raise ValueError("Produktbild ist zu groß")
+            return data
     
     def change_save_path(self):
         """Öffnet Dialog zur Pfadauswahl"""
@@ -2163,8 +2253,13 @@ class ProductGeneratorGUI:
         credentials = base64.b64encode(
             f"{client_id}:{client_secret}".encode('utf-8')
         ).decode('ascii')
+        api_host = (
+            'api.sandbox.ebay.com'
+            if getattr(self, 'ebay_environment', 'production') == 'sandbox'
+            else 'api.ebay.com'
+        )
         request = urllib.request.Request(
-            "https://api.ebay.com/identity/v1/oauth2/token",
+            f"https://{api_host}/identity/v1/oauth2/token",
             data=urllib.parse.urlencode({
                 'grant_type': 'client_credentials',
                 'scope': 'https://api.ebay.com/oauth/api_scope',
@@ -2193,8 +2288,13 @@ class ProductGeneratorGUI:
             parameters['gtin'] = normalized_identifier
         else:
             parameters['q'] = search_term
+        api_host = (
+            'api.sandbox.ebay.com'
+            if getattr(self, 'ebay_environment', 'production') == 'sandbox'
+            else 'api.ebay.com'
+        )
         endpoint = (
-            "https://api.ebay.com/buy/browse/v1/item_summary/search?"
+            f"https://{api_host}/buy/browse/v1/item_summary/search?"
             + urllib.parse.urlencode(parameters)
         )
         request = urllib.request.Request(
@@ -2938,6 +3038,7 @@ class ProductGeneratorGUI:
         return title, description
 
     def fetch_url(self, url):
+        self.validate_remote_url(url)
         headers = {
             'User-Agent': (
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -2954,8 +3055,31 @@ class ProductGeneratorGUI:
         }
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=20) as response:
+            self.validate_remote_url(response.geturl())
+            declared = int(response.headers.get('Content-Length') or 0)
+            if declared > MAX_TEXT_RESPONSE_BYTES:
+                raise ValueError("Webantwort ist zu groß")
             encoding = response.headers.get_content_charset() or 'utf-8'
-            return response.read().decode(encoding, errors='replace')
+            data = response.read(MAX_TEXT_RESPONSE_BYTES + 1)
+            if len(data) > MAX_TEXT_RESPONSE_BYTES:
+                raise ValueError("Webantwort ist zu groß")
+            return data.decode(encoding, errors='replace')
+
+    @staticmethod
+    def validate_remote_url(url):
+        """Blockiert lokale Dateipfade und direkte private Netzwerkziele."""
+        parsed = urllib.parse.urlparse(str(url))
+        if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+            raise ValueError("Nur HTTP-/HTTPS-Produktlinks sind erlaubt")
+        hostname = parsed.hostname.casefold().rstrip('.')
+        if hostname == 'localhost' or hostname.endswith('.localhost'):
+            raise ValueError("Lokale Netzwerkziele sind nicht erlaubt")
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError:
+            return
+        if not address.is_global:
+            raise ValueError("Private oder lokale IP-Adressen sind nicht erlaubt")
 
     def search_search_page(self, url, base_url):
         html = self.fetch_url(url)
@@ -3123,6 +3247,19 @@ class TabbedProductGeneratorGUI:
         self.retired_tabs = []
         self.tab_counter = 0
         self.session_file = Path.home() / ".eBayCreationToolSession.json"
+        self.config_file = Path.home() / ".eBayCreationToolConfig.json"
+        try:
+            app_config = json.loads(
+                self.config_file.read_text(encoding='utf-8')
+            )
+        except Exception:
+            app_config = {}
+        self.restore_session_enabled = bool(
+            app_config.get('restore_session', True)
+        )
+        self.clear_session_on_exit = bool(
+            app_config.get('clear_session_on_exit', False)
+        )
 
         toolbar = ttk.Frame(root, padding=(8, 6))
         toolbar.pack(fill=tk.X)
@@ -3180,7 +3317,7 @@ class TabbedProductGeneratorGUI:
         root.config(menu=self.menubar)
         self.notebook.bind('<<NotebookTabChanged>>', self.on_tab_changed)
         self.settings_window = None
-        if not self.restore_session():
+        if not self.restore_session_enabled or not self.restore_session():
             self.add_tab()
         self.root.after(2000, self.autosave_session)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -3361,12 +3498,83 @@ class TabbedProductGeneratorGUI:
             entry = ttk.Entry(marketplace_frame, show='•', width=54)
             entry.grid(row=row, column=1, sticky=tk.EW, pady=3)
             secret_entries[secret_name] = entry
+            status = (
+                trans['secret_saved_status']
+                if controller.get_secret(secret_name)
+                else trans['secret_missing_status']
+            )
+            ttk.Label(
+                marketplace_frame, text=status, foreground='#555555'
+            ).grid(row=row, column=2, sticky=tk.W, padx=(8, 0))
         marketplace_frame.columnconfigure(1, weight=1)
+
+        ebay_environment_var = tk.StringVar(
+            value=controller.ebay_environment
+        )
+        ttk.Label(
+            marketplace_frame, text=trans['ebay_environment']
+        ).grid(row=3, column=0, sticky=tk.W, padx=(0, 8), pady=3)
+        ttk.OptionMenu(
+            marketplace_frame,
+            ebay_environment_var,
+            controller.ebay_environment,
+            'production',
+            'sandbox',
+        ).grid(row=3, column=1, sticky=tk.W, pady=3)
+
+        api_actions = ttk.Frame(marketplace_frame)
+        api_actions.grid(
+            row=4, column=0, columnspan=3, sticky=tk.W, pady=(6, 2)
+        )
+        ttk.Button(
+            api_actions,
+            text=f"{trans['secret_test']} – Kleinanzeigen",
+            command=lambda: self._test_marketplace_connection(
+                controller, window, 'kleinanzeigen', secret_entries,
+                ebay_environment_var
+            ),
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(
+            api_actions,
+            text=f"{trans['secret_test']} – eBay",
+            command=lambda: self._test_marketplace_connection(
+                controller, window, 'ebay', secret_entries,
+                ebay_environment_var
+            ),
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(
+            api_actions,
+            text=trans['secret_delete'],
+            command=lambda: self._delete_marketplace_credentials(
+                controller, window
+            ),
+        ).pack(side=tk.LEFT)
         ttk.Label(
             marketplace_frame,
             text=trans['secret_hint'],
             foreground='#555555',
-        ).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
+        ).grid(row=5, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+
+        session_frame = ttk.LabelFrame(
+            content, text=trans['session_frame'], padding=8
+        )
+        session_frame.pack(fill=tk.X, pady=(0, 12))
+        restore_session_var = tk.BooleanVar(
+            value=controller.restore_session_enabled
+        )
+        clear_session_var = tk.BooleanVar(
+            value=controller.clear_session_on_exit
+        )
+        ttk.Checkbutton(
+            session_frame,
+            text=trans['session_restore'],
+            variable=restore_session_var,
+        ).pack(anchor=tk.W)
+        ttk.Checkbutton(
+            session_frame,
+            text=trans['session_clear_on_exit'],
+            variable=clear_session_var,
+        ).pack(anchor=tk.W)
 
         font_row = ttk.Frame(content)
         font_row.pack(fill=tk.X, pady=(0, 12))
@@ -3413,7 +3621,8 @@ class TabbedProductGeneratorGUI:
             actions,
             text=trans['save_button'],
             command=lambda: self._save_settings(
-                controller, window, legal_editor, secret_entries
+                controller, window, legal_editor, secret_entries,
+                ebay_environment_var, restore_session_var, clear_session_var
             ),
         ).pack(side=tk.LEFT)
         ttk.Button(
@@ -3425,8 +3634,86 @@ class TabbedProductGeneratorGUI:
         window.grab_set()
         window.focus_set()
 
+    def _test_marketplace_connection(
+        self, controller, window, provider, secret_entries=None,
+        ebay_environment_var=None,
+    ):
+        """Testet bewusst nur Authentifizierung und einen kleinen API-Aufruf."""
+        trans = TRANSLATIONS[controller.language]
+        try:
+            relevant_names = (
+                ('kleinanzeigen_api_key',)
+                if provider == 'kleinanzeigen'
+                else ('ebay_client_id', 'ebay_client_secret')
+            )
+            for name in relevant_names:
+                entry = (secret_entries or {}).get(name)
+                value = entry.get().strip() if entry is not None else ''
+                if value:
+                    controller.set_secret(name, value)
+            if provider == 'ebay':
+                controller.ebay_environment = (
+                    ebay_environment_var.get()
+                    if ebay_environment_var is not None else 'production'
+                )
+                controller._ebay_access_token = None
+                controller._ebay_access_token_expires = 0
+                controller.get_ebay_access_token()
+            else:
+                # Eine minimale Live-Suche validiert den Key; sie kostet
+                # entsprechend dem Anbieter einen Credit.
+                controller.search_kleinanzeigen_agent(
+                    f"Verbindungstest-{int(time.time())}"
+                )
+            controller.audit_security_event(
+                'connection_test', provider, 'success'
+            )
+            messagebox.showinfo(
+                trans['marketplace_api_frame'],
+                trans['secret_test_success'],
+                parent=window,
+            )
+        except Exception as exc:
+            controller.audit_security_event(
+                'connection_test', provider, 'failed'
+            )
+            messagebox.showerror(
+                trans['marketplace_api_frame'],
+                f"{trans['secret_test_failed']}\n\n{exc}",
+                parent=window,
+            )
+
+    def _delete_marketplace_credentials(self, controller, window):
+        trans = TRANSLATIONS[controller.language]
+        if not messagebox.askyesno(
+            trans['marketplace_api_frame'],
+            trans['secret_delete_confirm'],
+            parent=window,
+        ):
+            return
+        try:
+            for name in (
+                'kleinanzeigen_api_key', 'ebay_client_id',
+                'ebay_client_secret',
+            ):
+                controller.delete_secret(name)
+            controller._ebay_access_token = None
+            controller._ebay_access_token_expires = 0
+            controller.audit_security_event(
+                'credentials_deleted', 'all', 'success'
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                trans['marketplace_api_frame'], str(exc), parent=window
+            )
+            return
+        window.destroy()
+        self.open_settings()
+
     def _save_settings(
-        self, controller, window, legal_editor=None, secret_entries=None
+        self, controller, window, legal_editor=None, secret_entries=None,
+        ebay_environment_var=None, restore_session_var=None,
+        clear_session_var=None,
     ):
         """Speichert nur die Konfiguration, niemals einen Verkaufsbeitrag."""
         controller.on_font_size_changed()
@@ -3449,6 +3736,10 @@ class TabbedProductGeneratorGUI:
                 value = entry.get().strip()
                 if value:
                     controller.set_secret(name, value)
+                    controller.audit_security_event(
+                        'credential_saved',
+                        'kleinanzeigen' if name.startswith('kleinanzeigen') else 'ebay',
+                    )
         except Exception as exc:
             messagebox.showerror(
                 TRANSLATIONS[controller.language]['marketplace_api_frame'],
@@ -3458,12 +3749,29 @@ class TabbedProductGeneratorGUI:
             return
         controller._ebay_access_token = None
         controller._ebay_access_token_expires = 0
+        controller.ebay_environment = (
+            ebay_environment_var.get()
+            if ebay_environment_var is not None else controller.ebay_environment
+        )
+        controller.restore_session_enabled = (
+            bool(restore_session_var.get())
+            if restore_session_var is not None
+            else controller.restore_session_enabled
+        )
+        controller.clear_session_on_exit = (
+            bool(clear_session_var.get())
+            if clear_session_var is not None
+            else controller.clear_session_on_exit
+        )
         controller.save_config()
         settings = {
             'language': controller.language,
             'font_size': controller.font_size,
             'save_path': controller.save_path,
             'legal_clause': legal_clause,
+            'ebay_environment': controller.ebay_environment,
+            'restore_session': controller.restore_session_enabled,
+            'clear_session_on_exit': controller.clear_session_on_exit,
             'providers': {
                 name: bool(variable.get())
                 for name, variable in controller.provider_vars.items()
@@ -3473,6 +3781,9 @@ class TabbedProductGeneratorGUI:
             other.save_path = settings['save_path']
             other.path_label.config(text=other.save_path)
             other.set_legal_clause(settings['legal_clause'])
+            other.ebay_environment = settings['ebay_environment']
+            other.restore_session_enabled = settings['restore_session']
+            other.clear_session_on_exit = settings['clear_session_on_exit']
             for name, enabled in settings['providers'].items():
                 if name in other.provider_vars:
                     other.provider_vars[name].set(enabled)
@@ -3485,6 +3796,10 @@ class TabbedProductGeneratorGUI:
             other.status_var.set(
                 TRANSLATIONS[other.language]['settings_saved']
             )
+        self.restore_session_enabled = settings['restore_session']
+        self.clear_session_on_exit = settings['clear_session_on_exit']
+        if not self.restore_session_enabled:
+            self.delete_session_file()
         if window.winfo_exists():
             window.destroy()
 
@@ -3530,12 +3845,22 @@ class TabbedProductGeneratorGUI:
         }
 
     def save_session(self):
+        if not self.restore_session_enabled:
+            self.delete_session_file()
+            return
         try:
             data = self.serialize_session()
             temporary = self.session_file.with_suffix('.tmp')
             with open(temporary, 'w', encoding='utf-8') as handle:
                 json.dump(data, handle, ensure_ascii=False, indent=2)
             os.replace(temporary, self.session_file)
+        except Exception:
+            pass
+
+    def delete_session_file(self):
+        try:
+            self.session_file.unlink(missing_ok=True)
+            self.session_file.with_suffix('.tmp').unlink(missing_ok=True)
         except Exception:
             pass
 
@@ -3546,6 +3871,8 @@ class TabbedProductGeneratorGUI:
         self.root.after(2000, self.autosave_session)
 
     def restore_session(self):
+        if not self.restore_session_enabled:
+            return False
         try:
             with open(self.session_file, 'r', encoding='utf-8') as handle:
                 data = json.load(handle)
@@ -3599,7 +3926,10 @@ class TabbedProductGeneratorGUI:
         return True
 
     def on_close(self):
-        self.save_session()
+        if self.clear_session_on_exit:
+            self.delete_session_file()
+        else:
+            self.save_session()
         self.root.destroy()
 
     def add_tab(self):

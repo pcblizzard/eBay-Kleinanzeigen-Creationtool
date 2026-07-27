@@ -134,6 +134,50 @@ class ProductGeneratorTests(unittest.TestCase):
 
 
 class OnlineProviderTests(unittest.TestCase):
+    def test_private_and_local_product_urls_are_blocked(self):
+        for url in (
+            "http://localhost/admin",
+            "http://127.0.0.1/",
+            "http://192.168.1.1/",
+            "file:///C:/Windows/win.ini",
+        ):
+            with self.subTest(url=url):
+                with self.assertRaises(ValueError):
+                    ProductGeneratorGUI.validate_remote_url(url)
+        ProductGeneratorGUI.validate_remote_url(
+            "https://www.amazon.de/dp/B07QB3369M"
+        )
+
+    def test_insecure_keyring_backend_is_rejected(self):
+        backend = type("NullKeyring", (), {})()
+        fake_keyring = type(
+            "FakeKeyringModule", (),
+            {"get_keyring": staticmethod(lambda: backend)},
+        )
+        with patch.dict("sys.modules", {"keyring": fake_keyring}):
+            with self.assertRaises(RuntimeError):
+                ProductGeneratorGUI.secure_keyring()
+
+    def test_ebay_sandbox_uses_sandbox_api_host(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        gui.ebay_environment = "sandbox"
+        gui._ebay_access_token = None
+        gui._ebay_access_token_expires = 0
+        response = Mock()
+        response.read.return_value = json.dumps({
+            "access_token": "token", "expires_in": 7200
+        }).encode("utf-8")
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        with (
+            patch.object(gui, "get_secret", side_effect=["id", "secret"]),
+            patch("urllib.request.urlopen", return_value=response) as urlopen,
+        ):
+            gui.get_ebay_access_token()
+        self.assertIn(
+            "api.sandbox.ebay.com", urlopen.call_args.args[0].full_url
+        )
+
     def test_kleinanzeigen_agent_maps_public_ad_metadata(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
         payload = {
