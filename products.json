@@ -5,15 +5,43 @@
       "variants": [
         {
           "name": "Samsung Galaxy S26",
-          "description": "Display: 6,1\" AMOLED 120Hz\nProzessor: Snapdragon 8 Elite\nKamera: 50MP Hauptkamera, 12MP Ultra-Wide\nAkkumulator: 4000 mAh mit 25W Schnellladen\nBesonderheiten: Leichte Kratzer auf dem Displayschutz vorhanden."
+          "description": {
+            "de": "Display: 6,1\" AMOLED 120Hz\nProzessor: Snapdragon 8 Elite\nKamera: 50MP Hauptkamera, 12MP Ultra-Wide\nAkkumulator: 4000 mAh mit 25W Schnellladen\nBesonderheiten: Leichte Kratzer auf dem Displayschutz vorhanden.",
+            "en": "Display: 6.1\" AMOLED 120Hz\nProcessor: Snapdragon 8 Elite\nCamera: 50MP main, 12MP ultra-wide\nBattery: 4000 mAh with 25W fast charging\nCondition: Light scratches on screen protector."
+          }
         },
         {
           "name": "Samsung Galaxy S26 Plus",
-          "description": "Display: 6,7\" AMOLED 120Hz\nProzessor: Snapdragon 8 Elite\nKamera: 50MP Hauptkamera, 12MP Ultra-Wide, 10MP Telefoto\nAkkumulator: 4500 mAh mit 45W Schnellladen\nBesonderheiten: Neuwertig, kaum benutzt."
+          "description": {
+            "de": "Display: 6,7\" AMOLED 120Hz\nProzessor: Snapdragon 8 Elite\nKamera: 50MP Hauptkamera, 12MP Ultra-Wide, 10MP Telefoto\nAkkumulator: 4500 mAh mit 45W Schnellladen\nBesonderheiten: Neuwertig, kaum benutzt.",
+            "en": "Display: 6.7\" AMOLED 120Hz\nProcessor: Snapdragon 8 Elite\nCamera: 50MP main, 12MP ultra-wide, 10MP telephoto\nBattery: 4500 mAh with 45W fast charging\nCondition: Like new, hardly used."
+          }
         },
         {
           "name": "Samsung Galaxy S26 Ultra",
-          "description": "Display: 6,8\" AMOLED 144Hz Dynamic\nProzessor: Snapdragon 8 Elite\nKamera: 200MP Hauptkamera, 50MP Ultra-Wide, 10MP + 10MP Telefoto\nAkkumulator: 5000 mAh mit 65W Schnellladen\nBesonderheiten: Top-Zustand, OVP vorhanden."
+          "description": {
+            "de": "Display: 6,8\" AMOLED 144Hz Dynamic\nProzessor: Snapdragon 8 Elite\nKamera: 200MP Hauptkamera, 50MP Ultra-Wide, 10MP + 10MP Telefoto\nAkkumulator: 5000 mAh mit 65W Schnellladen\nBesonderheiten: Top-Zustand, OVP vorhanden.",
+            "en": "Display: 6.8\" AMOLED 144Hz Dynamic\nProcessor: Snapdragon 8 Elite\nCamera: 200MP main, 50MP ultra-wide, 10MP + 10MP telephoto\nBattery: 5000 mAh with 65W fast charging\nCondition: Top condition, original packaging included."
+          }
+        }
+      ]
+    },
+    {
+      "id": "samsung_ssd",
+      "variants": [
+        {
+          "name": "Samsung SSD 980 Pro 1TB",
+          "description": {
+            "de": "Hochwertige NVMe SSD mit 1TB Speicherplatz, ideal für Gaming und schnellen Datentransfer.",
+            "en": "High-performance NVMe SSD with 1TB capacity, ideal for gaming and fast data transfer."
+          }
+        },
+        {
+          "name": "Samsung SSD 970 EVO Plus 1TB",
+          "description": {
+            "de": "Schnelle SSD in gutem Zustand, mit hohem Datendurchsatz und langlebiger Speicherleistung.",
+            "en": "Fast SSD in good condition, with high throughput and reliable storage performance."
+          }
         }
       ]
     },
@@ -22,15 +50,69 @@
       "variants": [
         {
           "name": "Apple iPhone 16",
-          "description": "Display: 6,1\" Super Retina XDR\nProzessor: A18 Chip\nKamera: 48MP Dual-Kamera\nAkkumulator: 3460 mAh mit 20W Schnellladen\nBesonderheiten: Sehr guter Zustand."
+          "description": {
+            "de": "Display: 6,1\" Super Retina XDR\nProzessor: A18 Chip\nKamera: 48MP Dual-Kamera\nAkkumulator: 3460 mAh mit 20W Schnellladen\nBesonderheiten: Sehr guter Zustand.",
+            "en": "Display: 6.1\" Super Retina XDR\nProcessor: A18 Chip\nCamera: 48MP dual-camera\nBattery: 3460 mAh with 20W fast charging\nCondition: Very good condition."
+          }
         },
         {
           "name": "Apple iPhone 16 Plus",
-          "description": "Display: 6,7\" Super Retina XDR\nProzessor: A18 Chip\nKamera: 48MP Dual-Kamera\nAkkumulator: 4685 mAh mit 20W Schnellladen\nBesonderheiten: Neuwertig."
+          "description": {
+            "de": "Display: 6,7\" Super Retina XDR\nProzessor: A18 Chip\nKamera: 48MP Dual-Kamera\nAkkumulator: 4685 mAh mit 20W Schnellladen\nBesonderheiten: Neuwertig.",
+            "en": "Display: 6.7\" Super Retina XDR\nProcessor: A18 Chip\nCamera: 48MP dual-camera\nBattery: 4685 mAh with 20W fast charging\nCondition: Like new."
+          }
         },
         {
           "name": "Apple iPhone 16 Pro",
-          "description": "Display: 6,3\" Super Retina XDR\nProzessor: A18 Pro\nKamera: 48MP + 12MP Ultra-Wide + 12MP Telefoto\nAkkumulator: 3823 mAh mit 25W Schnellladen\nBesonderheiten: Premium Zustand, wie neu."
+          "description": {
+            "de": "Display: 6,3\" Super Retina XDR\nProzessor: A18 Pro\nKamera: 48MP + 12MP Ultra-Wide + 12MP Telefoto\nAkkumulator: 3823 mAh mit 25W Schnellladen\nBesonderheiten: Premium Zustand, wie neu.",
+            "en": "Display: 6.3\" Super Retina XDR\nProcessor: A18 Pro\nCamera: 48MP + 12MP ultra-wide + 12MP telephoto\nBattery: 3823 mAh with 25W fast charging\nCondition: Premium condition, like new."
+          }
+        }
+      ]
+    },
+    {
+      "id": "bose_headphones",
+      "variants": [
+        {
+          "name": "Bose QuietComfort 45",
+          "description": {
+            "de": "Aktive Geräuschunterdrückung, 24 Stunden Akkulaufzeit, sehr guter Zustand, Originalverpackung vorhanden.",
+            "en": "Active noise cancelling, 24-hour battery life, excellent condition, original packaging included."
+          }
+        },
+        {
+          "name": "Bose QuietComfort Ultra",
+          "description": {
+            "de": "High-End-Kopfhörer mit neuester Geräuschunterdrückung, kaum benutzt, mit Zubehör.",
+            "en": "High-end headphones with latest noise cancellation, hardly used, includes accessories."
+          }
+        },
+        {
+          "name": "Bose SoundLink Color II",
+          "description": {
+            "de": "Kompakter Bluetooth-Lautsprecher, guter Zustand, perfekt für unterwegs.",
+            "en": "Compact Bluetooth speaker, good condition, perfect for on-the-go."
+          }
+        }
+      ]
+    },
+    {
+      "id": "sony_headphones",
+      "variants": [
+        {
+          "name": "Sony WH-1000XM5",
+          "description": {
+            "de": "Premium-Kopfhörer mit erstklassiger ANC und langem Akku, sehr guter Zustand.",
+            "en": "Premium headphones with top-class ANC and long battery life, excellent condition."
+          }
+        },
+        {
+          "name": "Sony WF-1000XM5",
+          "description": {
+            "de": "In-Ear-Kopfhörer mit Geräuschunterdrückung und hoher Klangqualität.",
+            "en": "In-ear headphones with noise cancellation and high sound quality."
+          }
         }
       ]
     }

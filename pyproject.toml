@@ -5,9 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ebay-kleinanzeigen-creationtool"
 version = "0.1.0"
-description = "GUI-Tool zur automatischen Erstellung von Produktbeschreibungen für eBay und Kleinanzeigen mit rechtssicherer Gewährleistungsklausel"
+description = "GUI-Tool zur Erstellung prüfbarer Produktbeschreibungen für eBay und Kleinanzeigen mit festem Privatverkaufs-Hinweis"
 readme = "README.md"
 requires-python = ">=3.10"
+dependencies = ["Pillow>=10.0"]
 license = {text = "MIT"}
 authors = [
     {name = "Michael", email = "michael@example.com"}
@@ -36,7 +37,7 @@ Repository = "https://github.com/yourusername/eBay_Kleinanzeigen.git"
 "Bug Tracker" = "https://github.com/yourusername/eBay_Kleinanzeigen/issues"
 
 [tool.setuptools]
-packages = ["product_generator"]
+py-modules = ["product_generator_gui"]
 
 [project.scripts]
 ebay-creationtool = "product_generator_gui:main"
