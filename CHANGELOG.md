@@ -11,6 +11,8 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 - Geizhals-Social-Media-, Werbe-, Hilfe- und Navigationslinks werden nicht als Produkte angezeigt.
 - Amazon-Werbeanzeigen und generische Angebotstreffer werden vollständig ausgefiltert.
 - Die Live-Vorschau kompiliert auch unter Python 3.10.
+- Unabhängig veröffentlichte Bücher erhalten einen exakten ISBN-Fallback über ZVAB.
+- ISBN-basierte AbeBooks-/ZVAB-Cover werden unterstützt.
 
 ## [0.2.0] - 2026-07-27
 

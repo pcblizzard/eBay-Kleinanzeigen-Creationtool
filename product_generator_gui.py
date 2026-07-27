@@ -1026,6 +1026,8 @@ class ProductGeneratorGUI:
             r'id=["\']landingImage["\'][^>]+src=["\']([^"\']+)',
             r'<img[^>]+src=["\']([^"\']*responsive-image[^"\']+)["\'][^>]+'
             r'class=["\'][^"\']*scaled_m04',
+            r'(https?://pictures\.abebooks\.com/isbn/'
+            r'[^"\']+\.(?:jpg|jpeg|png|webp))',
         )
         for pattern in patterns:
             match = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
@@ -1161,6 +1163,7 @@ class ProductGeneratorGUI:
             providers.append(
                 ('Deutsche Nationalbibliothek', self.search_dnb_isbn)
             )
+            providers.append(('ZVAB ISBN', self.search_zvab_isbn))
         if enabled.get('web_suggestions'):
             providers.append(('Web', self.search_web_suggestions))
         if enabled.get('wikipedia'):
@@ -1201,7 +1204,11 @@ class ProductGeneratorGUI:
             normalized_query = ' '.join(query_words)
             unique_results.sort(
                 key=lambda item: (
-                    'd-nb.info/' in item[2] or '/ean/' in item[2],
+                    (
+                        'd-nb.info/' in item[2]
+                        or '/ean/' in item[2]
+                        or 'zvab.com/products/isbn/' in item[2]
+                    ),
                     normalized_query in item[0].lower(),
                     sum(word in item[0].lower() for word in query_words),
                     difflib.SequenceMatcher(
@@ -1599,6 +1606,13 @@ class ProductGeneratorGUI:
         ):
             clean_label = self.clean_html_text(label)
             clean_value = self.clean_html_text(value)
+            if re.search(
+                r'(Kontakt zum Hersteller|Verantwortliche Person|'
+                r'Sicherheitsinformationen)',
+                clean_label,
+                re.IGNORECASE,
+            ):
+                continue
             if clean_label and clean_value:
                 facts.append(f"{clean_label}: {clean_value}")
             if len(facts) >= 15:
@@ -1698,6 +1712,30 @@ class ProductGeneratorGUI:
             f"https://d-nb.info/{dnb_id}" if dnb_id else endpoint,
         )
         description = '\n'.join(f"• {fact}" for fact in facts)
+        return [(title, description, source_url)]
+
+    def search_zvab_isbn(self, search_term):
+        """Fallback für ISBNs, die nicht im DNB-Bestand enthalten sind."""
+        variants = self.isbn_search_variants(search_term)
+        if not variants:
+            return []
+        isbn13 = next(
+            (value for value in variants if len(value) == 13),
+            variants[0],
+        )
+        source_url = f"https://www.zvab.com/products/isbn/{isbn13}"
+        html = self.fetch_url(source_url)
+        title, description = self.extract_comparison_product(html, 'zvab')
+        if not title or isbn13 not in html:
+            return []
+        title = re.sub(
+            r'\s+-\s+(?:Softcover|Hardcover|Taschenbuch)\s*$',
+            '',
+            title,
+            flags=re.IGNORECASE,
+        ).strip()
+        if not description:
+            description = f"• ISBN-13: {isbn13}"
         return [(title, description, source_url)]
 
     @staticmethod
@@ -2028,7 +2066,8 @@ class ProductGeneratorGUI:
         }
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=20) as response:
-            return response.read().decode('utf-8', errors='ignore')
+            encoding = response.headers.get_content_charset() or 'utf-8'
+            return response.read().decode(encoding, errors='replace')
 
     def search_search_page(self, url, base_url):
         html = self.fetch_url(url)

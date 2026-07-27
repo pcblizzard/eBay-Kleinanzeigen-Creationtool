@@ -172,6 +172,26 @@ class OnlineProviderTests(unittest.TestCase):
         )
         self.assertTrue(unicodedata.is_normalized("NFC", results[0][0]))
 
+    def test_zvab_fallback_resolves_independent_isbn(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        html = """
+        <h1>Daytrading für Einsteiger - Softcover</h1>
+        <dl>
+          <dt>Verlag</dt><dd>Independently published</dd>
+          <dt>Erscheinungsdatum</dt><dd>2022</dd>
+          <dt>ISBN 13</dt><dd>9798830537308</dd>
+          <dt>Anzahl der Seiten</dt><dd>143</dd>
+        </dl>
+        """
+        with patch.object(gui, 'fetch_url', return_value=html):
+            results = gui.search_zvab_isbn("979-8830537308")
+        self.assertEqual(results[0][0], "Daytrading für Einsteiger")
+        self.assertIn("Anzahl der Seiten: 143", results[0][1])
+        self.assertEqual(
+            results[0][2],
+            "https://www.zvab.com/products/isbn/9798830537308",
+        )
+
     def test_decomposed_dnb_umlauts_are_normalized(self):
         self.assertEqual(
             ProductGeneratorGUI.clean_marc_text("Mu\u0308nchen vera\u0308ndern"),
@@ -290,6 +310,18 @@ class OnlineProviderTests(unittest.TestCase):
             url,
             "https://www.penguin.de/resource/responsive-image/"
             "4503010/220/7/book.jpg.webp",
+        )
+
+    def test_abebooks_isbn_cover_is_supported(self):
+        html = (
+            '<img src="https://pictures.abebooks.com/isbn/'
+            '9798830537308-de.jpg">'
+        )
+        url = ProductGeneratorGUI.extract_product_image_url(
+            html, "https://www.zvab.com/products/isbn/9798830537308"
+        )
+        self.assertEqual(
+            url, "https://pictures.abebooks.com/isbn/9798830537308-de.jpg"
         )
 
     def test_amazon_search_builds_canonical_product_result(self):
