@@ -10,6 +10,7 @@ import io
 import hashlib
 import locale
 import os
+import sys
 import base64
 from pathlib import Path
 from datetime import datetime
@@ -41,8 +42,45 @@ except ImportError:
 # Konstante für die Gewährleistungsklausel
 WARRANTY_CLAUSE = """Privatverkauf. Die Ware wird unter Ausschluss der Sachmängelhaftung nach § 475 BGB verkauft. Ausgeschlossen ist jede Gewährleistung für Sachmängel. Die Haftung für arglistig verschwiegene Mängel sowie für Schäden aus der Verletzung von Leben, Körper oder Gesundheit bleibt unberührt."""
 
+MODULE_DIR = Path(__file__).resolve().parent
+APPLICATION_NAME = "eBay-Kleinanzeigen-Creationtool"
+
+
+def user_data_dir():
+    """Benutzerbezogenes Datenverzeichnis der Anwendung."""
+    root = os.environ.get('LOCALAPPDATA') or (Path.home() / '.local' / 'share')
+    return Path(root) / APPLICATION_NAME
+
+
+def default_products_file():
+    """Findet die Produktdatenbank auch im installierten Konsolenskript.
+
+    Gesucht wird neben dem Modul, in den mitinstallierten Paketdaten und
+    zuletzt im benutzerbezogenen Datenverzeichnis.
+    """
+    candidates = (
+        MODULE_DIR / "products.json",
+        Path(sys.prefix) / "share" / "ebay-creationtool" / "products.json",
+        user_data_dir() / "products.json",
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
+
+
+def default_output_dir():
+    """Standard-Ausgabeordner; im installierten Paket unterhalb des Nutzers."""
+    project_output = MODULE_DIR / "product_listings"
+    if os.access(MODULE_DIR, os.W_OK):
+        return project_output
+    return user_data_dir() / "product_listings"
+
+
 SECRET_SERVICE = "eBay-Kleinanzeigen-Creationtool"
 SECRET_PLACEHOLDER = "****************"
+SESSION_AUTOSAVE_MS = 15 * 1000
+RETIRED_TAB_GRACE_MS = 60 * 1000
 MAX_TEXT_RESPONSE_BYTES = 5 * 1024 * 1024
 MAX_IMAGE_RESPONSE_BYTES = 15 * 1024 * 1024
 
@@ -127,6 +165,7 @@ TRANSLATIONS = {
         "default_save_path_notice": "Standardpfad gespeichert",
         "config_load_error": "Fehler beim Laden der Konfiguration",
         "config_save_error": "Fehler beim Speichern der Konfiguration",
+        "security_log_error": "Sicherheitsprotokoll nicht beschreibbar",
         "settings_saved": "Einstellungen gespeichert",
         "legal_edit_label": "Privatverkaufs-Hinweis:",
         "legal_reset": "Standardtext wiederherstellen",
@@ -186,7 +225,10 @@ TRANSLATIONS = {
         "completeness_missing": "Noch zu prüfen:",
         "export_package": "📦 Produktordner exportieren",
         "export_success": "Produktordner erfolgreich erstellt:",
+        "export_images_failed": "Nicht abrufbare Produktbilder:",
         "limit_exceeded": "Zeichenlimit überschritten",
+        "field_title": "Titel",
+        "field_description": "Beschreibung",
         "price_active_notice": (
             "Preisempfehlung basiert auf aktiven Vergleichsangeboten, "
             "nicht auf abgeschlossenen Verkäufen."
@@ -273,6 +315,7 @@ TRANSLATIONS = {
         "default_save_path_notice": "Default path saved",
         "config_load_error": "Error loading configuration",
         "config_save_error": "Error saving configuration",
+        "security_log_error": "Security log is not writable",
         "settings_saved": "Settings saved",
         "legal_edit_label": "Private-sale notice:",
         "legal_reset": "Restore default text",
@@ -331,7 +374,10 @@ TRANSLATIONS = {
         "completeness_missing": "Still to review:",
         "export_package": "📦 Export product folder",
         "export_success": "Product folder created:",
+        "export_images_failed": "Product images that could not be fetched:",
         "limit_exceeded": "Character limit exceeded",
+        "field_title": "Title",
+        "field_description": "Description",
         "price_active_notice": (
             "The price suggestion is based on active comparison listings, "
             "not completed sales."
@@ -344,13 +390,15 @@ TRANSLATIONS = {
 class ProductGenerator:
     """Backend für Produktverwaltung"""
     
-    def __init__(self, products_file="products.json", output_dir="product_listings"):
-        self.products_file = products_file
-        self.output_dir = output_dir
+    def __init__(self, products_file=None, output_dir=None):
+        # Absolute Vorgaben: das installierte Konsolenskript startet in einem
+        # beliebigen Arbeitsverzeichnis und fände relative Pfade sonst nie.
+        self.products_file = Path(products_file or default_products_file())
+        self.output_dir = Path(output_dir or default_output_dir())
         self.products = []
         
         # Output-Verzeichnis erstellen
-        Path(self.output_dir).mkdir(exist_ok=True)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Produkte laden
         self.load_products()
@@ -435,25 +483,6 @@ class ProductGenerator:
         
         return results
     
-    def generate_listing(
-        self, product_variant, language="de", description_override=None,
-        legal_clause=WARRANTY_CLAUSE
-    ):
-        """Generiert die komplette Produktliste"""
-        description = product_variant['description']
-        if description_override is not None:
-            description = description_override.strip()
-        elif isinstance(description, dict):
-            description = description.get(language, description.get('de', ''))
-
-        source_url = product_variant.get("source_url", "")
-        source_label = "Quelle" if language == "de" else "Source"
-        source_line = f"\n\n{source_label}: {source_url}" if source_url else ""
-        return (
-            f"{description.rstrip()}{source_line}\n\n---\n\n"
-            f"{legal_clause.strip()}\n"
-        )
-
     @staticmethod
     def build_sales_draft(product_name, raw_description, language="de"):
         """Formt gefundene Fakten zu einem prüfbaren Verkaufsbeitrag."""
@@ -701,33 +730,33 @@ class ProductGenerator:
         )
         return f"{translated_label}: {translated_value}"
     
-    def save_listing(self, listing, product_name):
-        """Speichert die Liste als Textdatei"""
-        filename = product_name.replace('/', '_').replace('\\', '_').replace(':', '')
-        filepath = Path(self.output_dir) / f"{filename}.txt"
-        
+    def save_listing(self, listing, product_name, output_dir=None):
+        """Speichert die Liste als Textdatei, ohne vorhandene zu überschreiben.
+
+        Gemeinsamer Schreibpfad für den Backend-Export und die Oberfläche.
+        """
+        directory = Path(output_dir or self.output_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        stem = safe_filename(product_name)
+        filepath = directory / f"{stem}.txt"
+
         counter = 1
-        original_path = filepath
         while filepath.exists():
-            name_parts = original_path.stem.rsplit('_', 1)
-            if name_parts[-1].isdigit():
-                base_name = name_parts[0]
-            else:
-                base_name = original_path.stem
-            filepath = Path(self.output_dir) / f"{base_name}_{counter}.txt"
+            filepath = directory / f"{stem}_{counter}.txt"
             counter += 1
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(listing)
-        
+
+        filepath.write_text(listing, encoding='utf-8')
         return filepath
 
 
 class ProductGeneratorGUI:
     """GUI für den Produktgenerator"""
 
+    # Tab-übergreifend geteilt; Zugriffe laufen aus Netzwerk-Threads.
     _search_cache = {}
+    _search_cache_lock = threading.Lock()
     _search_cache_ttl = 15 * 60
+    _search_cache_max_entries = 128
     
     def __init__(
         self, root, embedded=False, close_callback=None, title_callback=None,
@@ -777,7 +806,7 @@ class ProductGeneratorGUI:
         self.legal_clause = str(
             config.get('legal_clause', WARRANTY_CLAUSE)
         ).strip() or WARRANTY_CLAUSE
-        project_output = str(Path(__file__).resolve().parent / "product_listings")
+        project_output = str(default_output_dir())
         self.save_path = config.get('save_path', project_output)
         if not os.path.exists(self.save_path):
             Path(project_output).mkdir(parents=True, exist_ok=True)
@@ -792,11 +821,7 @@ class ProductGeneratorGUI:
         self.ebay_categories = []
         self.ebay_aspects = []
         self.ebay_aspect_values = {}
-        data_root = Path(
-            os.environ.get('LOCALAPPDATA')
-            or (Path.home() / '.local' / 'share')
-        ) / 'eBay-Kleinanzeigen-Creationtool'
-        self.listing_store = ListingStore(data_root / 'listings.db')
+        self.listing_store = ListingStore(user_data_dir() / 'listings.db')
         self.product_record_id = ''
         self.current_platform = 'kleinanzeigen'
         self.platform_drafts = {}
@@ -812,11 +837,20 @@ class ProductGeneratorGUI:
             self.create_menu()
         self.setup_ui()
 
-    def detect_system_language(self):
-        language, _ = locale.getdefaultlocale()
-        if language and language.startswith('en'):
-            return 'en'
-        return 'de'
+    @staticmethod
+    def detect_system_language():
+        """Ermittelt die Oberflächensprache ohne das entfernte
+        ``locale.getdefaultlocale``."""
+        try:
+            language = locale.getlocale()[0] or ''
+        except (TypeError, ValueError):
+            language = ''
+        if not language:
+            for name in ('LC_ALL', 'LC_MESSAGES', 'LANG', 'LANGUAGE'):
+                language = os.environ.get(name, '')
+                if language:
+                    break
+        return 'en' if language.casefold().startswith('en') else 'de'
 
     def detect_dpi_scaling(self):
         try:
@@ -945,8 +979,13 @@ class ProductGeneratorGUI:
             'outcome': 'success' if outcome == 'success' else 'failed',
         }
         path = Path.home() / ".eBayCreationToolSecurity.log"
-        with open(path, 'a', encoding='utf-8') as handle:
-            handle.write(json.dumps(record, ensure_ascii=True) + '\n')
+        try:
+            with open(path, 'a', encoding='utf-8') as handle:
+                handle.write(json.dumps(record, ensure_ascii=True) + '\n')
+        except OSError:
+            # Ein nicht schreibbares Protokoll darf die auslösende Aktion
+            # (Verbindungstest, Secret-Löschung) nicht abbrechen.
+            print(TRANSLATIONS['de']['security_log_error'])
     
     def setup_ui(self):
         """Erstellt die Benutzeroberfläche"""
@@ -1859,7 +1898,9 @@ class ProductGeneratorGUI:
                 continue
             addition = len(block)
             if used + addition > available:
-                continue
+                # Abbrechen statt überspringen: ein übersprungener Block würde
+                # den Text in der Mitte auftrennen und Inhalte verfälschen.
+                break
             selected.append(block)
             used += addition
         return ''.join(selected).strip()
@@ -1941,19 +1982,52 @@ class ProductGeneratorGUI:
             self.preview_text.get('1.0', tk.END).strip()
             if body is None else str(body).strip()
         )
+        trans = TRANSLATIONS[self.language]
         errors = []
         if not title:
-            errors.append('Titel')
+            errors.append(trans['field_title'])
         if len(title) > profile.title_limit:
             errors.append(
-                f"Titel {len(title)}/{profile.title_limit}"
+                f"{trans['field_title']} {len(title)}/{profile.title_limit}"
             )
         full = self.full_platform_description(body)
         if len(full) > profile.description_limit:
             errors.append(
-                f"Beschreibung {len(full)}/{profile.description_limit}"
+                f"{trans['field_description']} "
+                f"{len(full)}/{profile.description_limit}"
             )
         return errors
+
+    @staticmethod
+    def parse_price(value):
+        """Liest deutsche und englische Preisschreibweisen.
+
+        Erkennt „1.234,56“, „1,234.56“, „1234,56“ und „1234.56“. Gibt bei
+        unlesbaren Eingaben ``None`` zurück.
+        """
+        text = re.sub(r'[^\d.,-]', '', str(value or '')).strip()
+        if not text:
+            return None
+        last_comma = text.rfind(',')
+        last_dot = text.rfind('.')
+        if last_comma > last_dot:
+            # Komma steht hinten: es ist das Dezimaltrennzeichen.
+            text = text.replace('.', '').replace(',', '.')
+        elif last_dot > last_comma:
+            text = text.replace(',', '')
+        else:
+            text = text.replace(',', '').replace('.', '')
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def format_price(amount):
+        """Formatiert einen Betrag in deutscher Schreibweise."""
+        return f"{amount:,.2f}".replace(',', '\x00').replace(
+            '.', ','
+        ).replace('\x00', '.')
 
     def apply_assistant_details(self):
         if not self.selected_variant or not self.product_record_id:
@@ -1976,10 +2050,8 @@ class ProductGeneratorGUI:
                 f"{scope}"
             )
         if price:
-            normalized_price = price.replace(',', '.')
-            try:
-                float(normalized_price)
-            except ValueError:
+            amount = self.parse_price(price)
+            if amount is None:
                 messagebox.showwarning(
                     trans['assistant_frame'],
                     trans['asking_price_label'],
@@ -1987,7 +2059,7 @@ class ProductGeneratorGUI:
                 return
             lines.append(
                 f"* {'Preisvorstellung' if self.language == 'de' else 'Asking price'}: "
-                f"{price.replace('.', ',')} €"
+                f"{self.format_price(amount)} €"
             )
         heading = (
             '### Angaben zum angebotenen Artikel'
@@ -2990,6 +3062,35 @@ class ProductGeneratorGUI:
             self.settings_menu.entryconfig(1, label=trans['menu_default_save_path'])
             self.menubar.entryconfig(0, label=trans['menu_settings'])
 
+    @classmethod
+    def _cache_lookup(cls, cache_key):
+        """Liefert einen noch gültigen Cache-Eintrag oder ``None``."""
+        with cls._search_cache_lock:
+            entry = cls._search_cache.get(cache_key)
+            if not entry:
+                return None
+            if time.monotonic() - entry[0] >= cls._search_cache_ttl:
+                cls._search_cache.pop(cache_key, None)
+                return None
+            return entry[1], entry[2]
+
+    @classmethod
+    def _cache_store(cls, cache_key, results, errors):
+        """Speichert ein Ergebnis und entfernt abgelaufene sowie älteste."""
+        now = time.monotonic()
+        with cls._search_cache_lock:
+            cls._search_cache[cache_key] = (now, results, errors)
+            for key, entry in list(cls._search_cache.items()):
+                if now - entry[0] >= cls._search_cache_ttl:
+                    cls._search_cache.pop(key, None)
+            overflow = len(cls._search_cache) - cls._search_cache_max_entries
+            if overflow > 0:
+                oldest = sorted(
+                    cls._search_cache.items(), key=lambda item: item[1][0]
+                )[:overflow]
+                for key, _entry in oldest:
+                    cls._search_cache.pop(key, None)
+
     def _start_scheduled_online_search(self, search_term, request_id):
         self._search_after_id = None
         if not self.is_search_current(search_term, request_id):
@@ -3023,9 +3124,9 @@ class ProductGeneratorGUI:
             search_term.casefold().strip(),
             tuple(sorted(name for name, active in enabled.items() if active)),
         )
-        cached = self._search_cache.get(cache_key)
-        if cached and time.monotonic() - cached[0] < self._search_cache_ttl:
-            results, errors = cached[1], cached[2]
+        cached = self._cache_lookup(cache_key)
+        if cached:
+            results, errors = cached
             self.root.after(
                 0,
                 lambda: self.apply_online_results(
@@ -3042,9 +3143,7 @@ class ProductGeneratorGUI:
         if persistent:
             results = [tuple(item) for item in persistent.get('results', [])]
             errors = list(persistent.get('errors', []))
-            self._search_cache[cache_key] = (
-                time.monotonic(), results, errors
-            )
+            self._cache_store(cache_key, results, errors)
             self.root.after(
                 0,
                 lambda: self.apply_online_results(
@@ -3124,9 +3223,7 @@ class ProductGeneratorGUI:
                 ),
                 reverse=True,
             )
-        self._search_cache[cache_key] = (
-            time.monotonic(), unique_results, errors
-        )
+        self._cache_store(cache_key, unique_results, errors)
         self.listing_store.cache_put(
             persistent_key,
             {'results': unique_results, 'errors': errors},
@@ -3389,7 +3486,7 @@ class ProductGeneratorGUI:
             ).strip()
 
             def candidate_score(candidate):
-                title, description, source_url = candidate
+                title, _description, source_url = candidate
                 normalized_title = re.sub(
                     r'\W+', ' ', title.lower()
                 ).strip()
@@ -4889,27 +4986,6 @@ class ProductGeneratorGUI:
             results.append((title, description, full_url))
         return results
 
-    def fetch_online_description(self, url):
-        try:
-            html = self.fetch_url(url)
-        except Exception:
-            return ''
-
-        patterns = [
-            r'<div[^>]*class=["\']?[^"\'>]*(?:product-description|description|product-specs|productDetails|product-detail|description-box)[^"\'>]*["\']?[^>]*>(.*?)</div>',
-            r'<section[^>]*class=["\']?[^"\'>]*(?:description|product-description)[^"\'>]*["\']?[^>]*>(.*?)</section>',
-            r'<p[^>]*>(.*?)</p>'
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
-            if match:
-                text = re.sub(r'<[^>]+>', '', match.group(1))
-                text = html_lib.unescape(text)
-                text = re.sub(r'\s+', ' ', text).strip()
-                if len(text) > 40:
-                    return text
-        return ''
-    
     def save_file(self):
         """Speichert die Produktbeschreibung als Textdatei"""
         trans = TRANSLATIONS[self.language]
@@ -4943,47 +5019,37 @@ class ProductGeneratorGUI:
         # Speichern im separaten Thread um GUI nicht zu blockieren
         def save_async():
             try:
-                # Dateiname sanitieren
                 if self.opened_file_path:
+                    # Eine geöffnete Datei wird bewusst zurückgeschrieben.
                     filepath = Path(self.opened_file_path)
+                    filepath.write_text(listing, encoding='utf-8')
                 else:
-                    filename = (
-                        f"{safe_filename(draft.get('title') or self.selected_variant['name'])}"
+                    name = (
+                        f"{draft.get('title') or self.selected_variant['name']}"
                         f"-{self.current_platform}"
                     )
-                    filepath = Path(self.save_path) / f"{filename}.txt"
-
                     # Neue Beiträge überschreiben keine vorhandenen Dateien.
-                    counter = 1
-                    original_path = filepath
-                    while filepath.exists():
-                        name_parts = original_path.stem.rsplit('_', 1)
-                        if name_parts[-1].isdigit():
-                            base_name = name_parts[0]
-                        else:
-                            base_name = original_path.stem
-                        filepath = (
-                            Path(self.save_path) / f"{base_name}_{counter}.txt"
-                        )
-                        counter += 1
-                
-                # Datei schreiben
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(listing)
-                
+                    filepath = self.generator.save_listing(
+                        listing, name, output_dir=self.save_path
+                    )
+
                 # Status updaten
-                self.root.after(0, lambda: self.status_var.set(f"{trans['saved_success']} {filepath.name}"))
-                self.root.after(0, lambda: messagebox.showinfo(
+                self.root.after(0, lambda path=filepath: self.status_var.set(
+                    f"{trans['saved_success']} {path.name}"
+                ))
+                self.root.after(0, lambda path=filepath: messagebox.showinfo(
                     trans['saved_success'],
-                    f"{trans['saved_success']}\n\n{filepath}"
+                    f"{trans['saved_success']}\n\n{path}"
                 ))
-                
-            except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror(
+
+            except Exception as exc:
+                # Das Lambda läuft erst später im Tk-Event-Loop; der Text muss
+                # deshalb jetzt gebunden werden, nicht die Exception selbst.
+                self.root.after(0, lambda error=str(exc): messagebox.showerror(
                     trans['save_error'],
-                    f"{trans['save_error']}\n\n{str(e)}"
+                    f"{trans['save_error']}\n\n{error}"
                 ))
-                self.root.after(0, lambda: self.status_var.set(f"{trans['save_error']}"))
+                self.root.after(0, lambda: self.status_var.set(trans['save_error']))
         
         thread = threading.Thread(target=save_async, daemon=True)
         thread.start()
@@ -5023,6 +5089,7 @@ class ProductGeneratorGUI:
         image_urls = list(self.selected_variant.get('image_urls') or [])
 
         def worker():
+            failed_images = 0
             try:
                 folder = self.listing_store.export_package(
                     product_id, output_root
@@ -5042,7 +5109,9 @@ class ProductGeneratorGUI:
                         )
                         (folder / name).write_bytes(data)
                     except Exception:
-                        continue
+                        # Einzelne blockierte Bilder brechen den Export nicht
+                        # ab, werden aber am Ende ausgewiesen.
+                        failed_images += 1
             except Exception as exc:
                 self.root.after(
                     0, lambda error=str(exc): messagebox.showerror(
@@ -5050,10 +5119,14 @@ class ProductGeneratorGUI:
                     )
                 )
                 return
+            notice = (
+                f"\n\n{trans['export_images_failed']} {failed_images}"
+                if failed_images else ''
+            )
             self.root.after(
                 0, lambda: messagebox.showinfo(
                     trans['export_package'],
-                    f"{trans['export_success']}\n\n{folder}",
+                    f"{trans['export_success']}\n\n{folder}{notice}",
                 )
             )
 
@@ -5098,6 +5171,7 @@ class TabbedProductGeneratorGUI:
         self.controllers = {}
         self.retired_tabs = []
         self.tab_counter = 0
+        self._session_fingerprint = None
         self.session_file = Path.home() / ".eBayCreationToolSession.json"
         self.config_file = Path.home() / ".eBayCreationToolConfig.json"
         try:
@@ -5130,19 +5204,23 @@ class TabbedProductGeneratorGUI:
         self.export_button = ttk.Button(
             toolbar,
             text=TRANSLATIONS['de']['export_button'],
-            command=lambda: self.run_on_active('save_file'),
+            command=lambda: self.run_on_active(ProductGeneratorGUI.save_file),
         )
         self.export_button.pack(side=tk.LEFT, padx=(12, 6))
         self.copy_button = ttk.Button(
             toolbar,
             text=TRANSLATIONS['de']['copy_button'],
-            command=lambda: self.run_on_active('copy_listing'),
+            command=lambda: self.run_on_active(
+                ProductGeneratorGUI.copy_listing
+            ),
         )
         self.copy_button.pack(side=tk.LEFT)
         self.package_button = ttk.Button(
             toolbar,
             text=TRANSLATIONS['de']['export_package'],
-            command=lambda: self.run_on_active('export_product_package'),
+            command=lambda: self.run_on_active(
+                ProductGeneratorGUI.export_product_package
+            ),
         )
         self.package_button.pack(side=tk.LEFT, padx=(6, 0))
 
@@ -5159,7 +5237,7 @@ class TabbedProductGeneratorGUI:
         )
         self.file_menu.add_command(
             label=TRANSLATIONS['de']['menu_save'],
-            command=lambda: self.run_on_active('save_file'),
+            command=lambda: self.run_on_active(ProductGeneratorGUI.save_file),
         )
         self.file_menu.add_separator()
         self.file_menu.add_command(
@@ -5177,7 +5255,7 @@ class TabbedProductGeneratorGUI:
         self.settings_window = None
         if not self.restore_session_enabled or not self.restore_session():
             self.add_tab()
-        self.root.after(2000, self.autosave_session)
+        self.root.after(SESSION_AUTOSAVE_MS, self.autosave_session)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def update_chrome_language(self, language):
@@ -5293,14 +5371,14 @@ class TabbedProductGeneratorGUI:
             path_buttons,
             text=trans['menu_change_save_path'],
             command=lambda: self._settings_path_action(
-                controller, 'change_save_path'
+                controller, ProductGeneratorGUI.change_save_path
             ),
         ).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(
             path_buttons,
             text=trans['menu_default_save_path'],
             command=lambda: self._settings_path_action(
-                controller, 'set_default_save_path'
+                controller, ProductGeneratorGUI.set_default_save_path
             ),
         ).pack(side=tk.LEFT)
 
@@ -5695,8 +5773,8 @@ class TabbedProductGeneratorGUI:
         if window.winfo_exists():
             window.destroy()
 
-    def _settings_path_action(self, controller, method_name):
-        getattr(controller, method_name)()
+    def _settings_path_action(self, controller, method):
+        method(controller)
         if self.settings_window and self.settings_window.winfo_exists():
             self.settings_window.destroy()
         self.open_settings()
@@ -5706,10 +5784,11 @@ class TabbedProductGeneratorGUI:
         if controller:
             self.update_chrome_language(controller.language)
 
-    def run_on_active(self, method_name):
+    def run_on_active(self, method):
+        """Führt eine Controller-Methode auf dem aktiven Tab aus."""
         controller = self.active_controller()
         if controller:
-            getattr(controller, method_name)()
+            method(controller)
 
     def active_controller(self):
         selected = self.notebook.select()
@@ -5742,12 +5821,18 @@ class TabbedProductGeneratorGUI:
             'tabs': tabs,
         }
 
-    def save_session(self):
+    def save_session(self, only_if_changed=False):
         if not self.restore_session_enabled:
             self.delete_session_file()
             return
         try:
             data = self.serialize_session()
+            if only_if_changed:
+                # Unveränderte Sitzungen nicht erneut auf die Platte schreiben.
+                fingerprint = json.dumps(data, ensure_ascii=False, sort_keys=True)
+                if fingerprint == self._session_fingerprint:
+                    return
+                self._session_fingerprint = fingerprint
             temporary = self.session_file.with_suffix('.tmp')
             with open(temporary, 'w', encoding='utf-8') as handle:
                 json.dump(data, handle, ensure_ascii=False, indent=2)
@@ -5765,8 +5850,8 @@ class TabbedProductGeneratorGUI:
     def autosave_session(self):
         if not self.root.winfo_exists():
             return
-        self.save_session()
-        self.root.after(2000, self.autosave_session)
+        self.save_session(only_if_changed=True)
+        self.root.after(SESSION_AUTOSAVE_MS, self.autosave_session)
 
     def restore_session(self):
         if not self.restore_session_enabled:
@@ -5864,10 +5949,10 @@ class TabbedProductGeneratorGUI:
         else:
             self.save_session()
         for controller in self.controllers.values():
-            try:
-                controller.listing_store.close()
-            except Exception:
-                pass
+            self.release_controller(controller)
+        for _container, controller in self.retired_tabs:
+            self.release_controller(controller)
+        self.retired_tabs = []
         self.root.destroy()
 
     def add_tab(self):
@@ -5945,6 +6030,9 @@ class TabbedProductGeneratorGUI:
             # Versteckt statt sofort zerstört: bereits laufende Netzwerk-Threads
             # können gefahrlos auslaufen, ohne andere Tabs zu beeinflussen.
             self.retired_tabs.append((container, controller))
+            # Nach der Schonfrist werden Frame und Datenbankverbindung
+            # tatsächlich freigegeben, sonst wachsen beide unbegrenzt.
+            self.root.after(RETIRED_TAB_GRACE_MS, self.dispose_retired_tabs)
         try:
             self.notebook.forget(container)
         except tk.TclError:
@@ -5952,10 +6040,31 @@ class TabbedProductGeneratorGUI:
         if not self.notebook.tabs():
             self.add_tab()
 
+    def dispose_retired_tabs(self):
+        """Gibt Frames und Datenbankverbindungen stillgelegter Tabs frei."""
+        pending, self.retired_tabs = self.retired_tabs, []
+        for container, controller in pending:
+            self.release_controller(controller)
+            try:
+                container.destroy()
+            except tk.TclError:
+                pass
+
+    @staticmethod
+    def release_controller(controller):
+        """Schließt die Produktakte eines Controllers genau einmal."""
+        if getattr(controller, '_store_released', False):
+            return
+        controller._store_released = True
+        try:
+            controller.listing_store.close()
+        except Exception:
+            pass
+
 
 def main():
     root = tk.Tk()
-    app = TabbedProductGeneratorGUI(root)
+    TabbedProductGeneratorGUI(root)
     root.mainloop()
 
 
