@@ -196,7 +196,7 @@ class OnlineProviderTests(unittest.TestCase):
         response.__exit__ = Mock(return_value=False)
         with (
             patch.object(gui, "get_secret", return_value="secret"),
-            patch("urllib.request.urlopen", return_value=response),
+            patch("urllib.request.urlopen", return_value=response) as urlopen,
         ):
             results = gui.search_kleinanzeigen_agent("Galaxy S23")
         self.assertEqual(results[0][0], "Samsung Galaxy S23")
@@ -205,6 +205,50 @@ class OnlineProviderTests(unittest.TestCase):
         self.assertEqual(
             results[0][2], "https://www.kleinanzeigen.de/s-anzeige/123"
         )
+        request = urlopen.call_args.args[0]
+        self.assertEqual(
+            request.headers["User-agent"],
+            "eBay-Kleinanzeigen-Creationtool/0.2",
+        )
+
+    def test_kleinanzeigen_connection_uses_regular_minimal_query(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        response = Mock()
+        response.read.return_value = json.dumps({
+            "success": True, "data": {"ads": []}
+        }).encode("utf-8")
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        with (
+            patch.object(gui, "get_secret", return_value="secret"),
+            patch("urllib.request.urlopen", return_value=response) as urlopen,
+        ):
+            self.assertTrue(gui.test_kleinanzeigen_agent_connection())
+        request = urlopen.call_args.args[0]
+        self.assertIn("q=iphone", request.full_url)
+        self.assertIn("size=1", request.full_url)
+
+    def test_amazon_gallery_extracts_unique_high_resolution_images(self):
+        html = r'''
+        <img id="landingImage"
+             data-old-hires="https://m.media-amazon.com/images/I/MAIN1._SL1500_.jpg">
+        <script>
+        'colorImages': {'initial': [
+          {"hiRes":"https://m.media-amazon.com/images/I/MAIN1._SL1500_.jpg",
+           "large":"https://m.media-amazon.com/images/I/MAIN1._SX600_.jpg"},
+          {"hiRes":"https://m.media-amazon.com/images/I/SIDE2._SL1500_.jpg"},
+          {"large":"https://m.media-amazon.com/images/I/BACK3._SX600_.jpg"}
+        ]}
+        </script>
+        '''
+        urls = ProductGeneratorGUI.extract_product_image_urls(
+            html, "https://www.amazon.de/dp/B07QB3369M"
+        )
+        self.assertEqual(len(urls), 3)
+        self.assertTrue(all("._SL1500_." in url for url in urls))
+        self.assertIn("/MAIN1.", urls[0])
+        self.assertIn("/SIDE2.", urls[1])
+        self.assertIn("/BACK3.", urls[2])
 
     def test_ebay_search_uses_gtin_and_german_marketplace(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)

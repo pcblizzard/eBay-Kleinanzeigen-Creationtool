@@ -52,6 +52,11 @@ TRANSLATIONS = {
         "editor_label": "Bearbeiten",
         "live_preview_label": "Live-Vorschau",
         "no_product_image": "Kein Produktbild verfügbar",
+        "previous_image": "◀",
+        "next_image": "▶",
+        "save_image": "Bild speichern…",
+        "save_image_title": "Produktbild speichern",
+        "image_saved": "Produktbild gespeichert:",
         "legal_frame": "Fester Hinweis (wird immer angehängt)",
         "options_frame": "Einstellungen",
         "path_label": "Speicherpfad:",
@@ -142,6 +147,11 @@ TRANSLATIONS = {
         "editor_label": "Edit",
         "live_preview_label": "Live preview",
         "no_product_image": "No product image available",
+        "previous_image": "◀",
+        "next_image": "▶",
+        "save_image": "Save image…",
+        "save_image_title": "Save product image",
+        "image_saved": "Product image saved:",
         "legal_frame": "Mandatory notice (always appended)",
         "options_frame": "Settings",
         "path_label": "Save path:",
@@ -907,8 +917,43 @@ class ProductGeneratorGUI:
             anchor=tk.N,
         )
         self.product_image_label.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self.image_controls = ttk.Frame(self.cover_panel)
+        self.image_controls.pack(fill=tk.X, padx=6, pady=(0, 6))
+        self.previous_image_button = ttk.Button(
+            self.image_controls,
+            text=trans['previous_image'],
+            width=3,
+            command=lambda: self.show_relative_product_image(-1),
+            state=tk.DISABLED,
+        )
+        self.previous_image_button.pack(side=tk.LEFT)
+        self.image_counter_var = tk.StringVar(value="0 / 0")
+        self.image_counter_label = ttk.Label(
+            self.image_controls,
+            textvariable=self.image_counter_var,
+            anchor=tk.CENTER,
+        )
+        self.image_counter_label.pack(side=tk.LEFT, expand=True, padx=4)
+        self.next_image_button = ttk.Button(
+            self.image_controls,
+            text=trans['next_image'],
+            width=3,
+            command=lambda: self.show_relative_product_image(1),
+            state=tk.DISABLED,
+        )
+        self.next_image_button.pack(side=tk.LEFT)
+        self.save_image_button = ttk.Button(
+            self.cover_panel,
+            text=trans['save_image'],
+            command=self.save_current_product_image,
+            state=tk.DISABLED,
+        )
+        self.save_image_button.pack(fill=tk.X, padx=6, pady=(0, 6))
         self._product_photo = None
         self._product_image_original = None
+        self._product_image_urls = []
+        self._product_image_index = -1
+        self._product_image_current_url = ''
         self._cover_resize_after_id = None
         self._image_generation = 0
         self.cover_panel.bind('<Configure>', self.on_cover_panel_resized)
@@ -1279,6 +1324,13 @@ class ProductGeneratorGUI:
         self._image_generation += 1
         self._product_photo = None
         self._product_image_original = None
+        self._product_image_urls = []
+        self._product_image_index = -1
+        self._product_image_current_url = ''
+        self.image_counter_var.set("0 / 0")
+        self.previous_image_button.config(state=tk.DISABLED)
+        self.next_image_button.config(state=tk.DISABLED)
+        self.save_image_button.config(state=tk.DISABLED)
         self.product_image_label.config(
             image='',
             text=TRANSLATIONS[self.language]['no_product_image'],
@@ -1297,32 +1349,46 @@ class ProductGeneratorGUI:
 
         def worker():
             try:
-                image_url = variant.get('image_url', '')
-                if not image_url:
+                image_urls = list(variant.get('image_urls') or [])
+                if variant.get('image_url'):
+                    image_urls.insert(0, variant['image_url'])
+                if not image_urls:
                     html = self.fetch_url(source_url)
-                    image_url = self.extract_product_image_url(html, source_url)
-                if not image_url:
+                    image_urls = self.extract_product_image_urls(
+                        html, source_url
+                    )
+                image_urls = list(dict.fromkeys(
+                    url for url in image_urls if url
+                ))[:20]
+                if not image_urls:
                     return
-                image_data = self.fetch_binary(image_url)
-                image = Image.open(io.BytesIO(image_data))
-                if image.width * image.height > 50_000_000:
-                    raise ValueError("Produktbild überschreitet 50 Megapixel")
-                if image.mode not in ('RGB', 'RGBA'):
-                    image = image.convert('RGB')
-                else:
-                    image = image.copy()
+                variant['image_urls'] = image_urls
+                image = self.decode_product_image(
+                    self.fetch_binary(image_urls[0])
+                )
             except Exception:
                 return
             self.root.after(
                 0,
                 lambda: self.apply_product_image(
-                    variant, generation, image
+                    variant, generation, image, image_urls, 0
                 ),
             )
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def apply_product_image(self, variant, generation, image):
+    @staticmethod
+    def decode_product_image(image_data):
+        image = Image.open(io.BytesIO(image_data))
+        if image.width * image.height > 50_000_000:
+            raise ValueError("Produktbild überschreitet 50 Megapixel")
+        if image.mode not in ('RGB', 'RGBA'):
+            return image.convert('RGB')
+        return image.copy()
+
+    def apply_product_image(
+        self, variant, generation, image, image_urls=None, image_index=0
+    ):
         if (
             self._closed
             or self.selected_variant is not variant
@@ -1330,7 +1396,89 @@ class ProductGeneratorGUI:
         ):
             return
         self._product_image_original = image
+        if image_urls is not None:
+            self._product_image_urls = list(image_urls)
+        self._product_image_index = image_index
+        if self._product_image_urls:
+            self._product_image_current_url = self._product_image_urls[
+                image_index
+            ]
+        count = len(self._product_image_urls)
+        self.image_counter_var.set(
+            f"{image_index + 1} / {count}" if count else "0 / 0"
+        )
+        navigation_state = tk.NORMAL if count > 1 else tk.DISABLED
+        self.previous_image_button.config(state=navigation_state)
+        self.next_image_button.config(state=navigation_state)
+        self.save_image_button.config(
+            state=tk.NORMAL if self._product_image_current_url else tk.DISABLED
+        )
         self.render_responsive_cover()
+
+    def show_relative_product_image(self, offset):
+        count = len(self._product_image_urls)
+        if count < 2 or self.selected_variant is None:
+            return
+        target_index = (self._product_image_index + offset) % count
+        target_url = self._product_image_urls[target_index]
+        variant = self.selected_variant
+        self._image_generation += 1
+        generation = self._image_generation
+        self.previous_image_button.config(state=tk.DISABLED)
+        self.next_image_button.config(state=tk.DISABLED)
+
+        def worker():
+            try:
+                image = self.decode_product_image(
+                    self.fetch_binary(target_url)
+                )
+            except Exception:
+                return
+            self.root.after(
+                0,
+                lambda: self.apply_product_image(
+                    variant, generation, image,
+                    self._product_image_urls, target_index
+                ),
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def save_current_product_image(self):
+        url = self._product_image_current_url
+        if not url:
+            return
+        extension = Path(urllib.parse.urlparse(url).path).suffix.lower()
+        if extension not in ('.jpg', '.jpeg', '.png', '.webp'):
+            extension = '.jpg'
+        product_name = (
+            self.selected_variant.get('name', 'Produktbild')
+            if self.selected_variant else 'Produktbild'
+        )
+        safe_name = re.sub(r'[<>:"/\\|?*]+', '_', product_name).strip(' .')
+        filename = filedialog.asksaveasfilename(
+            title=TRANSLATIONS[self.language]['save_image_title'],
+            initialdir=self.save_path,
+            initialfile=f"{safe_name or 'Produktbild'}{extension}",
+            defaultextension=extension,
+            filetypes=[
+                ("Bilddateien", "*.jpg *.jpeg *.png *.webp"),
+                ("Alle Dateien", "*.*"),
+            ],
+        )
+        if not filename:
+            return
+        try:
+            image_data = self.fetch_binary(url)
+            Path(filename).write_bytes(image_data)
+        except Exception as exc:
+            messagebox.showerror(
+                TRANSLATIONS[self.language]['save_image_title'], str(exc)
+            )
+            return
+        self.status_var.set(
+            f"{TRANSLATIONS[self.language]['image_saved']} {filename}"
+        )
 
     def on_cover_panel_resized(self, event=None):
         """Skaliert das Bild verzögert mit der veränderbaren Cover-Spalte."""
@@ -1433,6 +1581,58 @@ class ProductGeneratorGUI:
                 return normalized_url(match.group(1))
         return ''
 
+    @classmethod
+    def extract_product_image_urls(cls, html, page_url):
+        """Extrahiert Hauptbild und Amazon-Galeriebilder in hoher Auflösung."""
+        primary = cls.extract_product_image_url(html, page_url)
+        urls = [primary] if primary else []
+        if 'amazon.' not in urllib.parse.urlparse(page_url).netloc.casefold():
+            return urls
+
+        decoded = html_lib.unescape(html).replace('\\/', '/')
+        color_start = decoded.casefold().find('colorimages')
+        gallery_section = (
+            decoded[color_start:color_start + 300_000]
+            if color_start >= 0 else decoded
+        )
+        candidates = re.findall(
+            r'["\'](?:hiRes|large|mainUrl)["\']\s*:\s*'
+            r'["\'](https?://m\.media-amazon\.com/images/I/'
+            r'[^"\']+?\.(?:jpg|jpeg|png|webp))',
+            gallery_section,
+            re.IGNORECASE,
+        )
+        if not candidates:
+            candidates = re.findall(
+                r'(https?://m\.media-amazon\.com/images/I/'
+                r'[^"\'\s]+?\.(?:jpg|jpeg|png|webp))',
+                gallery_section,
+                re.IGNORECASE,
+            )
+
+        seen_image_ids = set()
+        normalized_urls = []
+        for url in [*urls, *candidates]:
+            url = html_lib.unescape(url).replace('\\_', '_')
+            url = re.sub(r'\.\*([A-Z]{2}\d+)\*\.', r'._\1_.', url)
+            url = re.sub(
+                r'\._[^./]+_\.(?=(?:jpg|jpeg|png|webp)(?:$|\?))',
+                '._SL1500_.',
+                url,
+                flags=re.IGNORECASE,
+            )
+            image_id = re.search(
+                r'/images/I/([^./]+)', url, re.IGNORECASE
+            )
+            identity = image_id.group(1) if image_id else url.split('?', 1)[0]
+            if identity in seen_image_ids:
+                continue
+            seen_image_ids.add(identity)
+            normalized_urls.append(url)
+            if len(normalized_urls) >= 20:
+                break
+        return normalized_urls
+
     def fetch_binary(self, url):
         self.validate_remote_url(url)
         headers = {
@@ -1526,6 +1726,9 @@ class ProductGeneratorGUI:
         self.preview_frame.config(text=trans['preview_frame'])
         self.editor_frame.config(text=trans['editor_label'])
         self.rendered_frame.config(text=trans['live_preview_label'])
+        self.previous_image_button.config(text=trans['previous_image'])
+        self.next_image_button.config(text=trans['next_image'])
+        self.save_image_button.config(text=trans['save_image'])
         self.legal_frame.config(text=trans['legal_frame'])
         self.provider_frame.config(text=trans['provider_frame'])
         for button, label_key in self.provider_buttons.values():
@@ -2188,10 +2391,17 @@ class ProductGeneratorGUI:
         )
         request = urllib.request.Request(
             endpoint,
-            headers={'Accept': 'application/json', 'klaz_key': api_key},
+            headers={
+                'Accept': 'application/json',
+                'User-Agent': 'eBay-Kleinanzeigen-Creationtool/0.2',
+                'klaz_key': api_key,
+            },
         )
-        with urllib.request.urlopen(request, timeout=20) as response:
-            payload = json.loads(response.read().decode('utf-8'))
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read().decode('utf-8'))
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(self.api_error_message(exc)) from exc
         results = []
         for ad in payload.get('data', {}).get('ads', []):
             title = self.normalize_text(ad.get('title', ''))
@@ -2235,6 +2445,47 @@ class ProductGeneratorGUI:
                 ),
             ))
         return results
+
+    def test_kleinanzeigen_agent_connection(self):
+        """Validiert den Key mit einer minimalen regulären Ein-Treffer-Suche."""
+        api_key = self.get_secret('kleinanzeigen_api_key')
+        if not api_key:
+            raise RuntimeError("API-Key fehlt")
+        endpoint = (
+            "https://api.kleinanzeigen-agent.de/api/v2/kleinanzeigen/search?"
+            + urllib.parse.urlencode({'q': 'iphone', 'page': 0, 'size': 1})
+        )
+        request = urllib.request.Request(
+            endpoint,
+            headers={
+                'Accept': 'application/json',
+                'User-Agent': 'eBay-Kleinanzeigen-Creationtool/0.2',
+                'klaz_key': api_key,
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read().decode('utf-8'))
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(self.api_error_message(exc)) from exc
+        if not payload.get('success'):
+            raise RuntimeError(payload.get('message') or "API-Antwort ungültig")
+        return True
+
+    @staticmethod
+    def api_error_message(error):
+        """Extrahiert eine sichere Meldung, ohne Header oder Schlüssel zu loggen."""
+        try:
+            payload = json.loads(
+                error.read(4096).decode('utf-8', errors='replace')
+            )
+        except Exception:
+            return f"HTTP {getattr(error, 'code', '?')}: {getattr(error, 'reason', '')}"
+        data = payload.get('data') or {}
+        code = payload.get('code') or data.get('code')
+        message = payload.get('message') or data.get('message')
+        details = " – ".join(str(value) for value in (code, message) if value)
+        return details or f"HTTP {getattr(error, 'code', '?')}"
 
     def get_ebay_access_token(self):
         """Erzeugt und puffert ein eBay Application-Token."""
@@ -3662,9 +3913,7 @@ class TabbedProductGeneratorGUI:
             else:
                 # Eine minimale Live-Suche validiert den Key; sie kostet
                 # entsprechend dem Anbieter einen Credit.
-                controller.search_kleinanzeigen_agent(
-                    f"Verbindungstest-{int(time.time())}"
-                )
+                controller.test_kleinanzeigen_agent_connection()
             controller.audit_security_event(
                 'connection_test', provider, 'success'
             )

@@ -2,6 +2,14 @@
 
 ## Unveröffentlicht
 
+- Kleinanzeigen-Agent-Anfragen senden nun einen eindeutigen App-User-Agent;
+  der zuvor mit gültigen Keys mögliche HTTP-403-Verbindungstest ist behoben.
+- Der Verbindungstest nutzt eine minimale reguläre Ein-Treffer-Abfrage und zeigt
+  strukturierte API-Fehlermeldungen ohne sensible Header an.
+- Amazon-Galeriebilder werden zusätzlich zum Hauptbild in hoher Auflösung
+  erkannt, dedupliziert und in der Vorschau durchblätterbar angezeigt.
+- Das aktuell angezeigte Produktbild kann über einen Speichern-Dialog als
+  Originaldatei heruntergeladen werden.
 - Sicheren Keyring-Backend-Check ergänzt; unsichere oder fehlende Backends
   werden für die Secret-Speicherung abgewiesen.
 - Zugangsdaten können im Einstellungsdialog getestet, ersetzt und gelöscht
