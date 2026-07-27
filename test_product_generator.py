@@ -123,6 +123,53 @@ class ProductGeneratorTests(unittest.TestCase):
 
 
 class OnlineProviderTests(unittest.TestCase):
+    def test_isbn_10_and_13_are_normalized_and_cross_searched(self):
+        self.assertEqual(
+            ProductGeneratorGUI.isbn_search_variants("ISBN-10: 3442180651"),
+            ["3442180651", "9783442180653"],
+        )
+        self.assertEqual(
+            ProductGeneratorGUI.isbn_search_variants("978-3442180653"),
+            ["9783442180653", "3442180651"],
+        )
+
+    def test_dnb_isbn_returns_exact_structured_book(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        xml = """<?xml version="1.0"?>
+        <searchRetrieveResponse xmlns="http://www.loc.gov/zing/srw/">
+          <recordData>
+            <record xmlns="http://www.loc.gov/MARC21/slim">
+              <controlfield tag="001">1358109125</controlfield>
+              <datafield tag="020"><subfield code="a">9783442180653</subfield></datafield>
+              <datafield tag="020"><subfield code="a">3442180651</subfield></datafield>
+              <datafield tag="100"><subfield code="a">Robbins, Melanie Lee</subfield></datafield>
+              <datafield tag="245">
+                <subfield code="a">Die LET THEM Theorie</subfield>
+                <subfield code="b">zwei Worte, die dein Leben verändern werden</subfield>
+              </datafield>
+              <datafield tag="264">
+                <subfield code="b">Goldmann</subfield>
+                <subfield code="c">April 2025</subfield>
+              </datafield>
+              <datafield tag="300"><subfield code="a">364 Seiten</subfield></datafield>
+              <datafield tag="856">
+                <subfield code="u">https://www.penguin.de/ean/9783442180653</subfield>
+              </datafield>
+            </record>
+          </recordData>
+        </searchRetrieveResponse>"""
+        with patch.object(gui, 'fetch_url', return_value=xml):
+            results = gui.search_dnb_isbn("978-3442180653")
+        self.assertEqual(
+            results[0][0],
+            "Die LET THEM Theorie: zwei Worte, die dein Leben verändern werden",
+        )
+        self.assertIn("Autor: Robbins, Melanie Lee", results[0][1])
+        self.assertIn("ISBN-13: 9783442180653", results[0][1])
+        self.assertEqual(
+            results[0][2], "https://www.penguin.de/ean/9783442180653"
+        )
+
     def test_model_spellings_are_searched_in_both_forms(self):
         self.assertEqual(
             ProductGeneratorGUI.expand_search_spellings("Samsung Galaxy S23"),
@@ -222,6 +269,20 @@ class OnlineProviderTests(unittest.TestCase):
             html, "https://example.test/product"
         )
         self.assertEqual(url, "https://images.example.test/cover.jpg")
+
+    def test_penguin_book_cover_markup_is_supported(self):
+        html = """
+        <img src="/resource/responsive-image/4503010/220/7/book.jpg.webp"
+             alt="Die LET THEM Theorie" class="scaled_m04 prh-w-full">
+        """
+        url = ProductGeneratorGUI.extract_product_image_url(
+            html, "https://www.penguin.de/ean/9783442180653"
+        )
+        self.assertEqual(
+            url,
+            "https://www.penguin.de/resource/responsive-image/"
+            "4503010/220/7/book.jpg.webp",
+        )
 
     def test_amazon_search_builds_canonical_product_result(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)

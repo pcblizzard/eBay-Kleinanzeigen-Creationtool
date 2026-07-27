@@ -21,6 +21,7 @@ from tkinter import ttk, filedialog, messagebox
 import threading
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 
 try:
     from PIL import Image, ImageTk
@@ -34,7 +35,7 @@ WARRANTY_CLAUSE = """Privatverkauf. Die Ware wird unter Ausschluss der Sachmäng
 TRANSLATIONS = {
     "de": {
         "title": "eBay Kleinanzeigen - Produktbeschreibungs-Generator",
-        "search_label": "Produktname oder EAN/GTIN eingeben:",
+        "search_label": "Produktname, ISBN oder EAN/GTIN eingeben:",
         "search_frame": "1. Produktsuche",
         "variant_frame": "2. Variante auswählen",
         "preview_frame": "3. Beschreibung prüfen und bearbeiten",
@@ -81,7 +82,7 @@ TRANSLATIONS = {
     },
     "en": {
         "title": "eBay Classifieds - Product Description Generator",
-        "search_label": "Enter product name or EAN/GTIN:",
+        "search_label": "Enter product name, ISBN or EAN/GTIN:",
         "search_frame": "1. Product search",
         "variant_frame": "2. Select variant",
         "preview_frame": "3. Review and edit description",
@@ -1007,6 +1008,8 @@ class ProductGeneratorGUI:
             r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
             r'id=["\']landingImage["\'][^>]+data-old-hires=["\']([^"\']+)',
             r'id=["\']landingImage["\'][^>]+src=["\']([^"\']+)',
+            r'<img[^>]+src=["\']([^"\']*responsive-image[^"\']+)["\'][^>]+'
+            r'class=["\'][^"\']*scaled_m04',
         )
         for pattern in patterns:
             match = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
@@ -1134,6 +1137,10 @@ class ProductGeneratorGUI:
         descriptions = []
         errors = []
         providers = []
+        if self.normalize_isbn(search_term):
+            providers.append(
+                ('Deutsche Nationalbibliothek', self.search_dnb_isbn)
+            )
         if enabled.get('web_suggestions'):
             providers.append(('Web', self.search_web_suggestions))
         if enabled.get('wikipedia'):
@@ -1172,6 +1179,7 @@ class ProductGeneratorGUI:
             normalized_query = ' '.join(query_words)
             unique_results.sort(
                 key=lambda item: (
+                    'd-nb.info/' in item[2] or '/ean/' in item[2],
                     normalized_query in item[0].lower(),
                     sum(word in item[0].lower() for word in query_words),
                     difflib.SequenceMatcher(
@@ -1414,10 +1422,53 @@ class ProductGeneratorGUI:
         self.select_result_index(selected_index)
 
     @staticmethod
+    def normalize_isbn(value):
+        compact = re.sub(r'(?i)\bISBN(?:-1[03])?\b\s*:?\s*', '', value)
+        compact = re.sub(r'[^0-9Xx]', '', compact).upper()
+        if len(compact) == 10:
+            total = sum(
+                (10 - index) * (10 if char == 'X' else int(char))
+                for index, char in enumerate(compact)
+            )
+            return compact if total % 11 == 0 else ''
+        if len(compact) == 13 and compact.startswith(('978', '979')):
+            total = sum(
+                int(char) * (1 if index % 2 == 0 else 3)
+                for index, char in enumerate(compact[:12])
+            )
+            check = (10 - total % 10) % 10
+            return compact if check == int(compact[-1]) else ''
+        return ''
+
+    @classmethod
+    def isbn_search_variants(cls, value):
+        isbn = cls.normalize_isbn(value)
+        if not isbn:
+            return []
+        variants = [isbn]
+        if len(isbn) == 10:
+            base = f"978{isbn[:9]}"
+            total = sum(
+                int(char) * (1 if index % 2 == 0 else 3)
+                for index, char in enumerate(base)
+            )
+            variants.append(f"{base}{(10 - total % 10) % 10}")
+        elif isbn.startswith('978'):
+            base = isbn[3:12]
+            total = sum((10 - index) * int(char) for index, char in enumerate(base))
+            remainder = (11 - total % 11) % 11
+            check = 'X' if remainder == 10 else str(remainder)
+            variants.append(f"{base}{check}")
+        return variants
+
+    @staticmethod
     def expand_search_spellings(search_term):
         """Erzeugt z. B. aus S23 zusätzlich S 23 und umgekehrt."""
         if re.search(r'https?://', search_term, re.IGNORECASE):
             return [search_term]
+        isbn_variants = ProductGeneratorGUI.isbn_search_variants(search_term)
+        if isbn_variants:
+            return list(dict.fromkeys([search_term, *isbn_variants]))
         compact = re.sub(
             r'\b([A-Za-z])\s+(\d{1,4})\b', r'\1\2', search_term
         )
@@ -1553,6 +1604,84 @@ class ProductGeneratorGUI:
 
         description = '\n'.join(f"• {fact}" for fact in facts)
         return title, description
+
+    def search_dnb_isbn(self, search_term):
+        """Liest deutsche Buchdaten über die öffentliche DNB-SRU-API."""
+        variants = self.isbn_search_variants(search_term)
+        if not variants:
+            return []
+        isbn13 = next(
+            (value for value in variants if len(value) == 13),
+            variants[0],
+        )
+        params = urllib.parse.urlencode({
+            'version': '1.1',
+            'operation': 'searchRetrieve',
+            'query': f'NUM={isbn13}',
+            'recordSchema': 'MARC21-xml',
+        })
+        endpoint = f"https://services.dnb.de/sru/dnb?{params}"
+        root = ET.fromstring(self.fetch_url(endpoint))
+        marc_ns = {'m': 'http://www.loc.gov/MARC21/slim'}
+        record = root.find('.//m:record', marc_ns)
+        if record is None:
+            return []
+
+        def subfields(tag, code):
+            return [
+                self.clean_marc_text(node.text or '')
+                for node in record.findall(
+                    f"./m:datafield[@tag='{tag}']/m:subfield[@code='{code}']",
+                    marc_ns,
+                )
+                if self.clean_marc_text(node.text or '')
+            ]
+
+        title_parts = subfields('245', 'a') + subfields('245', 'b')
+        title = ': '.join(title_parts)
+        if not title:
+            return []
+
+        facts = []
+        mappings = (
+            ('Autor', subfields('100', 'a')),
+            ('Ausgabe', subfields('250', 'a')),
+            ('Erscheinungsort', subfields('264', 'a')),
+            ('Verlag', subfields('264', 'b')),
+            ('Erscheinungsdatum', subfields('264', 'c')),
+            ('Umfang', subfields('300', 'a')),
+            ('Ausstattung', subfields('300', 'b')),
+            ('Format', subfields('300', 'c')),
+        )
+        for label, values in mappings:
+            if values:
+                facts.append(f"{label}: {', '.join(values)}")
+
+        isbn_values = subfields('020', 'a')
+        for value in isbn_values:
+            label = 'ISBN-13' if len(value) == 13 else 'ISBN-10'
+            facts.append(f"{label}: {value}")
+
+        dnb_id_node = record.find("./m:controlfield[@tag='001']", marc_ns)
+        dnb_id = (
+            self.clean_marc_text(dnb_id_node.text or '')
+            if dnb_id_node is not None else ''
+        )
+        publisher_urls = [
+            value for value in subfields('856', 'u')
+            if value.startswith('https://') and not value.lower().endswith('.pdf')
+        ]
+        source_url = next(
+            (value for value in publisher_urls if '/ean/' in value),
+            f"https://d-nb.info/{dnb_id}" if dnb_id else endpoint,
+        )
+        description = '\n'.join(f"• {fact}" for fact in facts)
+        return [(title, description, source_url)]
+
+    @staticmethod
+    def clean_marc_text(value):
+        value = re.sub(r'[\x80-\x9f]', '', value)
+        return re.sub(r'\s+', ' ', value).strip(' /:;,')
 
     def search_web_suggestions(self, search_term):
         """Liefert breite, schlüsselfreie Produktkandidaten aus der Websuche."""
@@ -1884,6 +2013,13 @@ class ProductGeneratorGUI:
                 title_clean = re.sub(r'<[^>]+>', '', title).strip()
                 title_clean = re.sub(r'\s+', ' ', title_clean)
                 if not title_clean or not href:
+                    continue
+                if re.search(
+                    r'(Geizhals-App|Gesponserte Anzeige|AppStore|Google Play|'
+                    r'AppGallery|^Geizhals$)',
+                    title_clean,
+                    re.IGNORECASE,
+                ):
                     continue
                 full_url = urllib.parse.urljoin(base_url, href)
                 canonical_match = re.search(

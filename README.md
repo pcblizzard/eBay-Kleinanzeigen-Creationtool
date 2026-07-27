@@ -15,14 +15,17 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 ✅ **Zeitstempel**: Automatisch hinzugefügt  
 ✅ **Mehrere Beiträge**: Unabhängige Suchen und Entwürfe in separaten Tabs  
 ✅ **EAN/GTIN-Suche**: Barcodes werden direkt an die Produktsuchen übergeben  
+✅ **ISBN-10/ISBN-13**: Deutsche Buchdaten über die Deutsche Nationalbibliothek  
 ✅ **Geteilte Bearbeitung**: Editor und formatierte Live-Vorschau nebeneinander  
 ✅ **Produktcover**: Bild der ausgewählten Produktseite wird automatisch geladen  
 
 ## Installation
 
-**Anforderung:** Python 3.10+
+**Anforderung:** Python 3.10+, tkinter und Pillow. Installation:
 
-Keine zusätzlichen Pakete nötig! (tkinter ist in Python enthalten)
+```powershell
+python -m pip install .
+```
 
 ## Verwendung - GUI Version (EMPFOHLEN)
 
@@ -93,6 +96,12 @@ Markensuchen wie „Fantec“. Die Wikipedia-Livesuche nutzt die öffentliche
 MediaWiki-API und liefert Modellkandidaten mit deutsch- oder englischsprachigen
 Kurzbeschreibungen. Sie eignet sich besonders für bekannte Produktreihen, ersetzt
 aber keine technischen Herstellerdaten.
+
+ISBN-10 und ISBN-13 werden auch mit Bindestrichen erkannt, validiert und
+gegenseitig umgerechnet. Für deutsche Bücher fragt das Tool die öffentliche
+SRU-Schnittstelle der Deutschen Nationalbibliothek ab und übernimmt Titel,
+Autor, Ausgabe, Verlag, Erscheinungsdatum, Umfang und beide ISBN-Formen. Ein im
+Datensatz hinterlegter Verlagslink wird zusätzlich für das Buchcover verwendet.
 
 Amazon.de, Geizhals und Idealo sind experimentelle HTML-Provider. Amazon liefert
 Suchtreffer und – soweit zugänglich – Stichpunkte und technische Fakten der

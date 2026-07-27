@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ebay-kleinanzeigen-creationtool"
-version = "0.1.0"
+version = "0.2.0"
 description = "GUI-Tool zur Erstellung prüfbarer Produktbeschreibungen für eBay und Kleinanzeigen mit festem Privatverkaufs-Hinweis"
 readme = "README.md"
 requires-python = ">=3.10"
