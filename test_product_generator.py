@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 import unicodedata
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from product_generator_gui import (
     ProductGeneratorGUI,
     SECRET_PLACEHOLDER,
     WARRANTY_CLAUSE,
+    default_products_file,
 )
 from listing_store import (
     ListingStore,
@@ -23,40 +25,50 @@ class ProductGeneratorTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.generator = ProductGenerator(
-            products_file="products.json", output_dir=self.temp_dir.name
+            products_file=default_products_file(),
+            output_dir=self.temp_dir.name,
         )
 
     def tearDown(self):
         self.temp_dir.cleanup()
 
+    @staticmethod
+    def platform_description(body, legal_clause=WARRANTY_CLAUSE):
+        """Ruft den echten Zusammenbau der Oberfläche ohne Tk-Fenster auf."""
+        stub = SimpleNamespace(legal_clause=legal_clause)
+        return ProductGeneratorGUI.full_platform_description(stub, body)
+
     def test_required_clause_is_always_german_and_at_the_end(self):
-        variant = {
-            "name": "Testprodukt",
-            "description": {"de": "Deutsch", "en": "English"},
-        }
-        listing = self.generator.generate_listing(
-            variant, "en", description_override="Reviewed description"
-        )
+        listing = self.platform_description("Reviewed description")
         self.assertIn("Reviewed description", listing)
         self.assertTrue(listing.rstrip().endswith(WARRANTY_CLAUSE))
 
     def test_custom_legal_clause_replaces_default_at_the_end(self):
-        variant = {"name": "Produkt", "description": "Beschreibung"}
         custom = "Individuell bearbeiteter Privatverkaufs-Hinweis."
-        listing = self.generator.generate_listing(
-            variant, legal_clause=custom
-        )
+        listing = self.platform_description("Beschreibung", legal_clause=custom)
         self.assertTrue(listing.rstrip().endswith(custom))
         self.assertNotIn(WARRANTY_CLAUSE, listing)
 
-    def test_source_url_is_included(self):
-        variant = {
-            "name": "Testprodukt",
-            "description": "Beschreibung",
-            "source_url": "https://example.test/product",
-        }
-        listing = self.generator.generate_listing(variant)
-        self.assertIn("Quelle: https://example.test/product", listing)
+    def test_german_and_english_price_notations_are_parsed(self):
+        parse = ProductGeneratorGUI.parse_price
+        self.assertAlmostEqual(parse("1.234,56"), 1234.56)
+        self.assertAlmostEqual(parse("1,234.56"), 1234.56)
+        self.assertAlmostEqual(parse("1234,56"), 1234.56)
+        self.assertAlmostEqual(parse("1234.56"), 1234.56)
+        self.assertAlmostEqual(parse("99,90 EUR"), 99.90)
+        self.assertAlmostEqual(parse("1234"), 1234.0)
+        self.assertIsNone(parse("keine Zahl"))
+        self.assertIsNone(parse(""))
+        self.assertEqual(ProductGeneratorGUI.format_price(1234.5), "1.234,50")
+
+    def test_shortened_body_keeps_leading_text_contiguous(self):
+        stub = SimpleNamespace(legal_clause="Hinweis")
+        body = "\n\n".join(["A" * 60, "B" * 400, "C" * 20])
+        shortened = ProductGeneratorGUI.fit_platform_body(stub, body, 200)
+        # Der zu lange Block bricht ab; spätere Absätze dürfen nicht
+        # nachrücken und den Text in der Mitte auftrennen.
+        self.assertTrue(shortened.startswith("A" * 60))
+        self.assertNotIn("C" * 20, shortened)
 
     def test_duplicate_names_do_not_overwrite_files(self):
         first = self.generator.save_listing("eins", "Produkt")
@@ -126,7 +138,8 @@ class ListingStoreTests(unittest.TestCase):
             Path(self.temp_dir.name) / "listings.db"
         )
         self.generator = ProductGenerator(
-            products_file="products.json", output_dir=self.temp_dir.name
+            products_file=default_products_file(),
+            output_dir=self.temp_dir.name,
         )
         self.product_id = self.store.upsert_product(
             "Samsung Galaxy S23", identifier="4006381333931"
