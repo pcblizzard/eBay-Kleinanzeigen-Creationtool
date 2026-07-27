@@ -3246,7 +3246,7 @@ class ProductGeneratorGUI:
             return None
         host = parsed.netloc.casefold()
         if 'amazon.' in host:
-            return ('Amazon-Link', self.search_amazon)
+            return ('Amazon-Link', self.search_amazon_url_with_fallback)
         if 'geizhals.' in host:
             return ('Geizhals-Link', self.search_comparison_url_with_fallback)
         if 'idealo.' in host:
@@ -3264,6 +3264,65 @@ class ProductGeneratorGUI:
         slug = re.sub(r'-v\d+$', '', slug, flags=re.IGNORECASE)
         slug = re.sub(r'[_-]+', ' ', slug)
         return re.sub(r'\s+', ' ', slug).strip()
+
+    @staticmethod
+    def model_query_from_slug(url):
+        """Leitet aus einem Produkt-Slug einen suchtauglichen Modellnamen ab.
+
+        Der vollstaendige Slug ist als Suchbegriff zu lang und zu werblich.
+        Genommen werden die fuehrenden Woerter bis einschliesslich des ersten
+        Wortes mit einer Ziffer, denn dort steht die Modellnummer:
+        ``QB-X2US3R-Festplattengehaeuse-…`` liefert ``QB-X2US3R``.
+        """
+        path = urllib.parse.unquote(urllib.parse.urlparse(str(url)).path)
+        segments = [segment for segment in path.split('/') if segment]
+        candidates = [
+            segment for segment in segments
+            if segment.lower() not in ('dp', 'gp', 'product', 'b', 'd', 'aw')
+            and not segment.isdigit()
+            and re.search(r'[^\W\d_]', segment)
+            # Die ASIN selbst ist kein Modellname: sie kennt nur Amazon und
+            # als Suchbegriff liefert sie anderswo garantiert nichts.
+            and not re.fullmatch(r'[A-Z0-9]{10}', segment)
+        ]
+        if not candidates:
+            return ''
+        slug = re.sub(
+            r'\.(?:html?|php)$', '', max(candidates, key=len),
+            flags=re.IGNORECASE,
+        )
+        words = [word for word in re.split(r'[_-]+', slug) if word]
+        if not words:
+            return ''
+        for index, word in enumerate(words):
+            if re.search(r'\d', word) and re.search(r'[^\W\d_]', word):
+                return '-'.join(words[:index + 1])
+        return ' '.join(words[:4])
+
+    def search_amazon_url_with_fallback(self, url):
+        """Weicht bei blockierten Amazon-Produktseiten auf andere Quellen aus.
+
+        Die ASIN kennt nur Amazon; die Modellnummer im Slug finden die
+        Vergleichsportale dagegen zuverlaessig.
+        """
+        try:
+            results = self.search_amazon(url)
+            if results:
+                return results
+        except Exception:
+            pass
+        query = self.model_query_from_slug(url)
+        if not query:
+            return []
+        alternatives = []
+        for provider in (
+            self.search_geizhals, self.search_idealo, self.search_wikipedia
+        ):
+            try:
+                alternatives.extend(provider(query))
+            except Exception:
+                continue
+        return self.merge_provider_results([alternatives])
 
     def search_comparison_url_with_fallback(self, url):
         """Nutzt bei blockierten Preisportalen alternative Produktquellen."""
@@ -4984,6 +5043,20 @@ class ProductGeneratorGUI:
         if not address.is_global:
             raise ValueError("Private oder lokale IP-Adressen sind nicht erlaubt")
 
+    @staticmethod
+    def is_product_page_link(href, base_url):
+        """Trennt Produktseiten von Navigation, Filtern und Skriptlinks.
+
+        Kategorie- und Filterlinks wie ``geizhals.de/?fs=…&cat=gehhd`` haben
+        keinen eigenen Pfad; ``javascript:;`` ist ueberhaupt kein Ziel.
+        """
+        if href.casefold().startswith(('javascript:', 'mailto:', '#')):
+            return False
+        parsed = urllib.parse.urlparse(urllib.parse.urljoin(base_url, href))
+        if parsed.scheme not in ('http', 'https'):
+            return False
+        return parsed.path.strip('/') != ''
+
     def search_search_page(self, url, base_url):
         html = self.fetch_url(url)
         lowered = html.lower()
@@ -5003,11 +5076,13 @@ class ProductGeneratorGUI:
 
         for pattern in patterns:
             for match in re.findall(pattern, html, re.IGNORECASE | re.DOTALL):
-                href = match[0]
+                href = html_lib.unescape(match[0]).strip()
                 title = match[1] if len(match) > 1 else ''
                 title_clean = re.sub(r'<[^>]+>', '', title).strip()
                 title_clean = re.sub(r'\s+', ' ', title_clean)
                 if not title_clean or not href:
+                    continue
+                if not self.is_product_page_link(href, base_url):
                     continue
                 if re.search(
                     r'(Geizhals-App|Gesponserte Anzeige|AppStore|Google Play|'

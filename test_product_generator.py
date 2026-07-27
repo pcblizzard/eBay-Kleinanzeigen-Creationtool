@@ -837,7 +837,12 @@ class OnlineProviderTests(unittest.TestCase):
             "https://www.amazon.de/Produktname/dp/B07Q9QLH55"
         )
         self.assertEqual(provider_name, "Amazon-Link")
-        self.assertEqual(provider.__func__, gui.search_amazon.__func__)
+        # Der Wrapper ruft search_amazon auf und weicht bei einer Blockade auf
+        # die Vergleichsportale aus, statt ohne Treffer aufzugeben.
+        self.assertEqual(
+            provider.__func__,
+            gui.search_amazon_url_with_fallback.__func__,
+        )
 
     def test_truncated_amazon_title_uses_unique_suggestion_completion(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
@@ -899,6 +904,54 @@ class OnlineProviderTests(unittest.TestCase):
             "Fantec QB X2US3R Gehaeuse",
         )
         self.assertEqual(query("Fantec QB-X2US3R"), "Fantec QB-X2US3R")
+
+    def test_model_number_is_derived_from_a_product_slug(self):
+        model = ProductGeneratorGUI.model_query_from_slug
+        self.assertEqual(
+            model(
+                "https://www.amazon.de/QB-X2US3R-Festplattengeh%C3%A4use-"
+                "Festplatten-SUPERSPEED-temperaturgeregelt/dp/B01GSWFOA4"
+            ),
+            "QB-X2US3R",
+        )
+        self.assertEqual(
+            model("https://www.amazon.de/Samsung-Galaxy-S23-Smartphone/dp/X"),
+            "Samsung-Galaxy-S23",
+        )
+        self.assertEqual(model("https://www.amazon.de/dp/B01GSWFOA4"), "")
+
+    def test_blocked_amazon_link_falls_back_to_other_sources(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        url = (
+            "https://www.amazon.de/QB-X2US3R-Festplatten-"
+            "temperaturgeregelt/dp/B01GSWFOA4"
+        )
+        found = ("Fantec QB-X2US3R, schwarz", "Online gefunden", "https://g.test/x")
+        with patch.object(
+            gui, 'search_amazon',
+            side_effect=RuntimeError("Zugriff durch Amazon-Captcha blockiert"),
+        ), patch.object(
+            gui, 'search_geizhals', return_value=[found]
+        ) as geizhals, patch.object(
+            gui, 'search_idealo', return_value=[]
+        ), patch.object(gui, 'search_wikipedia', return_value=[]):
+            results = ProductGeneratorGUI.search_amazon_url_with_fallback(
+                gui, url
+            )
+        # Die Modellnummer aus dem Slug, nicht die nur Amazon bekannte ASIN.
+        geizhals.assert_called_once_with("QB-X2US3R")
+        self.assertEqual(results, [found])
+
+    def test_navigation_and_script_links_are_not_products(self):
+        is_product = ProductGeneratorGUI.is_product_page_link
+        base = "https://geizhals.de"
+        self.assertTrue(
+            is_product("/fantec-qb-x2us3r-schwarz-1826-a1471139.html", base)
+        )
+        self.assertFalse(is_product("javascript:;", base))
+        self.assertFalse(is_product("?fs=QB-X2US3R&hloc=de&cat=gehhd", base))
+        self.assertFalse(is_product("https://geizhals.de/?fs=X&mfc=5872", base))
+        self.assertFalse(is_product("#top", base))
 
     def test_known_amazon_fragment_is_repaired_without_network(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
