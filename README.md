@@ -10,9 +10,9 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 - ✅ **Prüfbare Beschreibung**: Produkttext vor dem Speichern bearbeiten
 - ✅ **Privatverkaufs-Hinweis**: Automatisch angehängt, warnend editierbar und auf den Standard zurücksetzbar
 - ✅ **Speicherort wählbar**: Standardmäßig im Projektordner `product_listings`
-- ✅ **Quellennachweis**: Online gefundene Daten enthalten die Produkt-URL
-- ✅ **Textdatei-Export**: Mit Produktnamen als Dateinamen
-- ✅ **Zeitstempel**: Automatisch hinzugefügt
+- ✅ **Quellennachweis**: Fundstellen werden pro Angabe gespeichert und beim
+  Produktordner-Export als `quellen.txt` mit ausgegeben
+- ✅ **Textdatei-Export**: Dateiname aus Titel und Plattform
 - ✅ **Mehrere Beiträge**: Unabhängige Suchen und Entwürfe in separaten Tabs
 - ✅ **EAN/GTIN-Suche**: Barcodes werden direkt an die Produktsuchen übergeben
 - ✅ **ISBN-10/ISBN-13**: Deutsche Buchdaten über die Deutsche Nationalbibliothek
@@ -44,7 +44,8 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 
 ## Installation
 
-**Anforderung:** Python 3.10+, tkinter und Pillow. Installation:
+**Anforderung:** Python 3.10+ mit tkinter. Die Abhängigkeiten `Pillow`
+(Produktbilder) und `keyring` (Zugangsdaten) installiert pip mit:
 
 ```powershell
 python -m pip install .
@@ -52,9 +53,15 @@ python -m pip install .
 
 ## Verwendung - GUI Version (EMPFOHLEN)
 
-### Terminal öffnen:
+Nach der Installation:
+
 ```powershell
-cd "I:\_BACKUP\MICHAEL\Dokumente\GitHub\eBay_Kleinanzeigen"
+ebay-creationtool
+```
+
+Oder direkt aus dem geklonten Projektordner:
+
+```powershell
 python product_generator_gui.py
 ```
 
@@ -151,7 +158,7 @@ Datei `products.json` bearbeiten:
 → Standard: `product_listings` im Projektordner
 
 4. "💾 Speichern" klicken
-   → Datei "Samsung Galaxy S26.txt" wird erstellt
+   → Datei "Samsung Galaxy S26-kleinanzeigen.txt" wird erstellt
 ```
 
 ---
@@ -250,9 +257,11 @@ werden ohne Schlüssel, Tokens oder API-Antworten in
 
 Die Sitzungswiederherstellung kann abgeschaltet werden. Optional löscht die App
 beim Beenden die lokale Sitzungsdatei. Importierte Produktlinks dürfen nur HTTP
-oder HTTPS verwenden; direkte Zugriffe auf lokale beziehungsweise private
-IP-Adressen werden blockiert. Textantworten sind auf 5 MB, Bilder auf 15 MB und
-50 Megapixel begrenzt.
+oder HTTPS verwenden; `localhost` sowie direkt angegebene private oder lokale
+IP-Adressen werden vor dem Abruf und nach Weiterleitungen abgewiesen. Diese
+Prüfung wertet den Hostnamen aus und löst ihn nicht auf: ein öffentlicher Name,
+der auf eine interne Adresse zeigt, wird nicht erkannt. Textantworten sind auf
+5 MB, Bilder auf 15 MB und 50 Megapixel begrenzt.
 
 GitHub Actions führt zusätzlich `pip-audit` und Gitleaks aus. Dependabot prüft
 wöchentlich Python- und GitHub-Actions-Abhängigkeiten. Lokal lässt sich der Audit
@@ -298,12 +307,14 @@ Text anhand der mitgespeicherten Quelle geprüft werden.
 
 ## Dateien
 
-- `product_generator_gui.py` - **GUI Version (EMPFOHLEN)**
-- `products.json` - Produktdatenbank
+- `product_generator_gui.py` - Oberfläche, Online-Quellen und Entwurfslogik
+- `listing_store.py` - SQLite-Produktakte, Plattformprofile und Paketexport
+- `products.json` - Mitgelieferte lokale Produktdatenbank
+- `test_product_generator.py` - Testsuite (`python -m unittest`)
 - `product_listings/` - Generierte Textdateien (oder Speicherpfad nach Wahl)
 
 ---
 
 ## Lizenz
 
-Für private Nutzung
+MIT — siehe [LICENSE](LICENSE).

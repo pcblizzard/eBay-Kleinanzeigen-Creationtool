@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 build/
 develop-eggs/
@@ -35,8 +36,11 @@ wheels/
 Thumbs.db
 
 # Project specific
+# Nur die generierten Beiträge ignorieren, nicht jede .txt im Repository.
 product_listings/
-*.txt
+*.db
+*.db-wal
+*.db-shm
 
 # Environment variables
 .env
