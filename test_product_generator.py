@@ -313,6 +313,30 @@ class OnlineProviderTests(unittest.TestCase):
         self.assertEqual(results[0][0], "FANTEC Qb-X2US3R Gehäuse")
         self.assertEqual(results[0][2], "https://www.amazon.de/dp/B01GSWFOA4")
 
+    def test_amazon_sponsored_results_are_excluded(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        search_html = """
+        <div data-asin="B000000001" data-component-type="s-search-result">
+          <span class="puis-sponsored-label-text">Gesponsert</span>
+          <h2 aria-label="Gesponserte Anzeige – Falsches Buch"></h2>
+        </div>
+        <div data-asin="B000000002" data-component-type="s-search-result">
+          <h2 aria-label="Das richtige Buch"></h2>
+        </div>
+        """
+        with patch.object(gui, 'fetch_url', return_value=search_html):
+            results = gui.search_amazon("Buchtitel")
+        self.assertEqual([item[0] for item in results], ["Das richtige Buch"])
+
+    def test_sponsored_and_offer_titles_are_globally_rejected(self):
+        self.assertTrue(ProductGeneratorGUI.is_unwanted_search_result(
+            "Gesponserte Anzeige – Fremdes Buch"
+        ))
+        self.assertTrue(ProductGeneratorGUI.is_unwanted_search_result("1 Angebot"))
+        self.assertFalse(ProductGeneratorGUI.is_unwanted_search_result(
+            "Die LET THEM Theorie"
+        ))
+
     def test_wikipedia_search_returns_google_pixel_models(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
         gui.language = "de"

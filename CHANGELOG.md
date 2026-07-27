@@ -9,6 +9,8 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 - DNB-Metadaten werden auf Unicode-NFC normalisiert, damit Umlaute in Tk korrekt erscheinen.
 - Quellenbeschriftungen bleiben unter dem Windows-/Vista-Theme sichtbar.
 - Geizhals-Social-Media-, Werbe-, Hilfe- und Navigationslinks werden nicht als Produkte angezeigt.
+- Amazon-Werbeanzeigen und generische Angebotstreffer werden vollständig ausgefiltert.
+- Die Live-Vorschau kompiliert auch unter Python 3.10.
 
 ## [0.2.0] - 2026-07-27
 

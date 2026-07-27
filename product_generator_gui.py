@@ -948,7 +948,7 @@ class ProductGeneratorGUI:
                 text = stripped[2:-2]
                 tag = 'title'
             elif re.match(r'^[*\-]\s+', stripped):
-                text = f"• {re.sub(r'^[*\-]\s+', '', stripped)}"
+                text = "• " + re.sub(r'^[*\-]\s+', '', stripped)
             else:
                 text = stripped
             text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
@@ -1191,6 +1191,8 @@ class ProductGeneratorGUI:
             )
             seen = set()
             for title, desc, source_url in descriptions:
+                if self.is_unwanted_search_result(title, source_url):
+                    continue
                 identity = re.sub(r'\W+', ' ', title.lower()).strip()
                 if identity and identity not in seen:
                     seen.add(identity)
@@ -1872,6 +1874,13 @@ class ProductGeneratorGUI:
             asin = match.group(1)
             block_end = starts[index + 1].start() if index + 1 < len(starts) else len(html)
             block = html[match.end():block_end]
+            if re.search(
+                r'(puis-sponsored|s-sponsored-label|'
+                r'Gesponserte Anzeige|Sponsored Ad|/sspa/click|sp_csd=)',
+                block,
+                re.IGNORECASE,
+            ):
+                continue
             title_match = re.search(
                 r'<h2[^>]+aria-label=["\']([^"\']+)["\']',
                 block,
@@ -1909,6 +1918,16 @@ class ProductGeneratorGUI:
             description = f"Amazon-Suchergebnis: {search_title}"
             results.append((search_title, description, source_url))
         return results
+
+    @staticmethod
+    def is_unwanted_search_result(title, source_url=''):
+        normalized = re.sub(r'\s+', ' ', str(title)).strip()
+        return bool(re.search(
+            r'^(?:Gesponserte Anzeige|Sponsored(?: Ad| Anzeige)?)\b|'
+            r'^\d+\s+Angebote?$|^Anzeige\b',
+            normalized,
+            re.IGNORECASE,
+        )) or '/sspa/click' in str(source_url).lower()
 
     def raise_for_amazon_block(self, html):
         lowered = html.lower()
@@ -2039,7 +2058,8 @@ class ProductGeneratorGUI:
                 if re.search(
                     r'(Geizhals-App|Gesponserte Anzeige|AppStore|Google Play|'
                     r'AppGallery|^Geizhals$|^Geizhals auf |'
-                    r'Bitte beachte die Hinweise|Ende der Seite)',
+                    r'Bitte beachte die Hinweise|Ende der Seite|'
+                    r'^\d+\s+Angebote?$)',
                     title_clean,
                     re.IGNORECASE,
                 ):
