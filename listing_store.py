@@ -486,6 +486,13 @@ class ListingStore:
         self.connection.commit()
 
     @synchronized
+    def cache_delete(self, key: str):
+        self.connection.execute(
+            "DELETE FROM cache WHERE cache_key=?", (key,)
+        )
+        self.connection.commit()
+
+    @synchronized
     def cache_get(self, key: str):
         row = self.connection.execute(
             "SELECT payload_json, expires_at FROM cache WHERE cache_key=?",

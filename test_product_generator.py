@@ -905,6 +905,31 @@ class OnlineProviderTests(unittest.TestCase):
         )
         self.assertEqual(query("Fantec QB-X2US3R"), "Fantec QB-X2US3R")
 
+    def test_failed_searches_are_never_cached(self):
+        found = [("Titel", "Text", "https://example.test/p")]
+        seconds = ProductGeneratorGUI.cache_seconds_for
+        self.assertEqual(seconds([], ["Amazon blockiert"]), 0)
+        self.assertEqual(seconds([], []), 0)
+        self.assertGreater(seconds(found, []), seconds(found, ["Idealo 503"]))
+        self.assertGreater(seconds(found, ["Idealo 503"]), 0)
+
+    def test_a_blocked_search_does_not_hide_a_later_retry(self):
+        key = ("regressionstest", ())
+        found = [("Titel", "Text", "https://example.test/p")]
+        try:
+            ProductGeneratorGUI._cache_store(key, [], ["blockiert"])
+            self.assertIsNone(ProductGeneratorGUI._cache_lookup(key))
+            ProductGeneratorGUI._cache_store(key, found, [])
+            self.assertEqual(
+                ProductGeneratorGUI._cache_lookup(key), (found, [])
+            )
+            # Ein spaeterer Fehlschlag darf keinen veralteten Treffer stehen
+            # lassen.
+            ProductGeneratorGUI._cache_store(key, [], ["blockiert"])
+            self.assertIsNone(ProductGeneratorGUI._cache_lookup(key))
+        finally:
+            ProductGeneratorGUI._search_cache.pop(key, None)
+
     def test_model_number_is_derived_from_a_product_slug(self):
         model = ProductGeneratorGUI.model_query_from_slug
         self.assertEqual(

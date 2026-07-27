@@ -756,6 +756,9 @@ class ProductGeneratorGUI:
     _search_cache = {}
     _search_cache_lock = threading.Lock()
     _search_cache_ttl = 15 * 60
+    # Lief eine Quelle auf einen Fehler, wird kurz gehalten und bald erneut
+    # gefragt; ein leeres Ergebnis wird gar nicht gespeichert.
+    _search_cache_partial_ttl = 90
     _search_cache_max_entries = 128
     
     def __init__(
@@ -3063,25 +3066,49 @@ class ProductGeneratorGUI:
             self.menubar.entryconfig(0, label=trans['menu_settings'])
 
     @classmethod
+    def cache_seconds_for(cls, results, errors):
+        """Bestimmt, wie lange ein Suchergebnis gelten darf.
+
+        Ein Fehlschlag ist kein Ergebnis: eine blockierte oder gedrosselte
+        Quelle wuerde sonst mitsamt ihrer Fehlermeldung fuer eine Viertelstunde
+        festgeschrieben, und selbst ein Neustart liefert nur den leeren
+        Eintrag aus der Datenbank zurueck. Unvollstaendige Laeufe halten
+        deshalb kurz, leere ueberhaupt nicht.
+        """
+        if not results:
+            return 0
+        if errors:
+            return cls._search_cache_partial_ttl
+        return cls._search_cache_ttl
+
+    @classmethod
     def _cache_lookup(cls, cache_key):
         """Liefert einen noch gültigen Cache-Eintrag oder ``None``."""
         with cls._search_cache_lock:
             entry = cls._search_cache.get(cache_key)
             if not entry:
                 return None
-            if time.monotonic() - entry[0] >= cls._search_cache_ttl:
+            stored_at, results, errors, ttl = entry
+            if time.monotonic() - stored_at >= ttl:
                 cls._search_cache.pop(cache_key, None)
                 return None
-            return entry[1], entry[2]
+            return results, errors
 
     @classmethod
     def _cache_store(cls, cache_key, results, errors):
         """Speichert ein Ergebnis und entfernt abgelaufene sowie älteste."""
+        ttl = cls.cache_seconds_for(results, errors)
+        if not ttl:
+            # Auch einen frueheren Treffer verwerfen, sonst bliebe ein
+            # veraltetes Ergebnis stehen, obwohl gerade nichts gefunden wurde.
+            with cls._search_cache_lock:
+                cls._search_cache.pop(cache_key, None)
+            return
         now = time.monotonic()
         with cls._search_cache_lock:
-            cls._search_cache[cache_key] = (now, results, errors)
+            cls._search_cache[cache_key] = (now, results, errors, ttl)
             for key, entry in list(cls._search_cache.items()):
-                if now - entry[0] >= cls._search_cache_ttl:
+                if now - entry[0] >= entry[3]:
                     cls._search_cache.pop(key, None)
             overflow = len(cls._search_cache) - cls._search_cache_max_entries
             if overflow > 0:
@@ -3224,11 +3251,17 @@ class ProductGeneratorGUI:
                 reverse=True,
             )
         self._cache_store(cache_key, unique_results, errors)
-        self.listing_store.cache_put(
-            persistent_key,
-            {'results': unique_results, 'errors': errors},
-            self._search_cache_ttl,
-        )
+        persistent_ttl = self.cache_seconds_for(unique_results, errors)
+        if persistent_ttl:
+            self.listing_store.cache_put(
+                persistent_key,
+                {'results': unique_results, 'errors': errors},
+                persistent_ttl,
+            )
+        else:
+            # Sonst ueberlebt ein Fehlschlag den Neustart und verhindert
+            # jeden neuen Versuch bis zum Ablauf.
+            self.listing_store.cache_delete(persistent_key)
         self.root.after(
             0,
             lambda: self.apply_online_results(
