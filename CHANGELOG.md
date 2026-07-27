@@ -4,6 +4,14 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 
 ## [Unveröffentlicht]
 
+### Geändert
+
+- Die Einstellungen befinden sich jetzt oberhalb der Produktsuche.
+- Ein Sprachwechsel erzeugt den aktuellen Verkaufsentwurf neu und übersetzt
+  Oberfläche, Vorlagen sowie bekannte strukturierte Metadatenfelder.
+- Der verbindliche deutsche Privatverkaufstext bleibt unabhängig von der
+  ausgewählten Sprache unverändert.
+
 ### Behoben
 
 - DNB-Metadaten werden auf Unicode-NFC normalisiert, damit Umlaute in Tk korrekt erscheinen.

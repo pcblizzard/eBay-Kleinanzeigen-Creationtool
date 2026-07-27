@@ -441,6 +441,32 @@ class OnlineProviderTests(unittest.TestCase):
             )
         self.assertEqual([item[0] for item in results], ["Die LET THEM Theorie"])
 
+    def test_english_book_draft_translates_controlled_metadata(self):
+        draft = ProductGenerator.build_sales_draft(
+            "Die LET THEM Theorie",
+            "\n".join([
+                "Autor: Robbins, Mel",
+                "Verlag: Goldmann",
+                "Erscheinungsdatum: April 2025",
+                "Sprache: Deutsch",
+                "Einband: Taschenbuch",
+                "Anzahl der Seiten: 364",
+            ]),
+            "en",
+        )
+        self.assertIn("Book description and details", draft)
+        self.assertIn("### Book details", draft)
+        self.assertIn("* Author: Robbins, Mel", draft)
+        self.assertIn("* Publisher: Goldmann", draft)
+        self.assertIn("* Publication date: April 2025", draft)
+        self.assertIn("* Language: German", draft)
+        self.assertIn("* Binding: Paperback", draft)
+        self.assertIn("* Pages: 364", draft)
+        self.assertIn("### Included", draft)
+        self.assertIn("Please remove or complete", draft)
+        self.assertNotIn("### Buchdetails", draft)
+        self.assertNotIn("Nicht Zutreffendes", draft)
+
 
 if __name__ == "__main__":
     unittest.main()

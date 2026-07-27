@@ -44,13 +44,14 @@ TRANSLATIONS = {
         "live_preview_label": "Live-Vorschau",
         "no_product_image": "Kein Produktbild verfügbar",
         "legal_frame": "Fester Hinweis (wird immer angehängt)",
-        "options_frame": "4. Optionen",
+        "options_frame": "Einstellungen",
         "path_label": "Speicherpfad:",
         "change_path": "📁 Speicherpfad ändern",
         "save_button": "💾 Speichern",
         "close_button": "❌ Beenden",
         "new_tab": "＋ Neuer Beitrag",
         "close_tab": "✕ Tab schließen",
+        "tab_default": "Beitrag",
         "language_label": "Sprache:",
         "default_path_button": "Standard-Speicherort wählen",
         "status_ready": "Bereit",
@@ -91,13 +92,14 @@ TRANSLATIONS = {
         "live_preview_label": "Live preview",
         "no_product_image": "No product image available",
         "legal_frame": "Mandatory notice (always appended)",
-        "options_frame": "4. Options",
+        "options_frame": "Settings",
         "path_label": "Save path:",
         "change_path": "📁 Change save path",
         "save_button": "💾 Save",
         "close_button": "❌ Close",
         "new_tab": "＋ New listing",
         "close_tab": "✕ Close tab",
+        "tab_default": "Listing",
         "language_label": "Language:",
         "default_path_button": "Select default save location",
         "status_ready": "Ready",
@@ -253,6 +255,11 @@ class ProductGenerator:
             clean = re.sub(r'^\s*[•*\-]\s*', '', line).strip()
             if clean and clean not in raw_lines:
                 raw_lines.append(clean)
+        if language == 'en':
+            raw_lines = [
+                ProductGenerator.translate_fact_label(line)
+                for line in raw_lines
+            ]
 
         category_text = f"{product_name} {raw_description}"
         is_book = bool(re.search(
@@ -338,6 +345,7 @@ class ProductGenerator:
                     "Feel free to contact me with any questions."
                 )
             contents_heading = "### Included"
+            review_hint = "*(Please remove or complete anything that does not apply.)*"
         else:
             title_suffix = (
                 "Buchbeschreibung und Details"
@@ -419,24 +427,68 @@ class ProductGenerator:
                     "Bei Fragen einfach melden."
                 )
             contents_heading = "### Lieferumfang"
+            review_hint = "*(Nicht Zutreffendes bitte entfernen oder ergänzen.)*"
 
         facts = '\n'.join(f"* {line}" for line in raw_lines)
         if not facts:
-            facts = (
-                "* [Autor, Ausgabe, Verlag, ISBN und Seitenzahl ergänzen]"
-                if is_book else "* [Format, Ausgabe, Laufzeit, Region und "
-                "Anzahl der Datenträger ergänzen]"
-                if is_physical_media else "* [Technische Angaben ergänzen]"
-            )
+            if language == "en":
+                facts = (
+                    "* [Add author, edition, publisher, ISBN and page count]"
+                    if is_book else "* [Add format, edition, running time, "
+                    "region and number of discs]"
+                    if is_physical_media else "* [Add technical details]"
+                )
+            else:
+                facts = (
+                    "* [Autor, Ausgabe, Verlag, ISBN und Seitenzahl ergänzen]"
+                    if is_book else "* [Format, Ausgabe, Laufzeit, Region und "
+                    "Anzahl der Datenträger ergänzen]"
+                    if is_physical_media else "* [Technische Angaben ergänzen]"
+                )
 
         return (
             f"**{product_name} – {title_suffix}**\n\n"
             f"{intro}\n\n"
             f"{details_heading}\n\n{facts}\n\n"
             f"{contents_heading}\n\n{contents}\n\n"
-            "*(Nicht Zutreffendes bitte entfernen oder ergänzen.)*\n\n"
+            f"{review_hint}\n\n"
             f"{footer}"
         )
+
+    @staticmethod
+    def translate_fact_label(line):
+        """Übersetzt bekannte strukturierte Metadatenfelder ins Englische."""
+        if ':' not in line:
+            return line
+        label, value = line.split(':', 1)
+        translations = {
+            'Autor': 'Author',
+            'Ausgabe': 'Edition',
+            'Erscheinungsort': 'Place of publication',
+            'Verlag': 'Publisher',
+            'Erscheinungsdatum': 'Publication date',
+            'Sprache': 'Language',
+            'Umfang': 'Extent',
+            'Ausstattung': 'Features',
+            'Format': 'Format',
+            'Einband': 'Binding',
+            'Anzahl der Seiten': 'Pages',
+            'Herausgeber': 'Editor',
+            'Produktübersicht': 'Product overview',
+        }
+        translated_label = translations.get(label.strip(), label.strip())
+        translated_value = value.strip()
+        value_translations = {
+            'Deutsch': 'German',
+            'Englisch': 'English',
+            'Taschenbuch': 'Paperback',
+            'Gebundene Ausgabe': 'Hardcover',
+            'Illustrationen': 'Illustrations',
+        }
+        translated_value = value_translations.get(
+            translated_value, translated_value
+        )
+        return f"{translated_label}: {translated_value}"
     
     def save_listing(self, listing, product_name):
         """Speichert die Liste als Textdatei"""
@@ -464,12 +516,14 @@ class ProductGeneratorGUI:
     """GUI für den Produktgenerator"""
     
     def __init__(
-        self, root, embedded=False, close_callback=None, title_callback=None
+        self, root, embedded=False, close_callback=None, title_callback=None,
+        language_callback=None
     ):
         self.root = root
         self.embedded = embedded
         self.close_callback = close_callback
         self.title_callback = title_callback
+        self.language_callback = language_callback
         self._closed = False
         if not embedded:
             self.root.geometry("900x750")
@@ -694,7 +748,12 @@ class ProductGeneratorGUI:
         path_info_frame = ttk.Frame(self.options_frame)
         path_info_frame.pack(fill=tk.X, pady=(0, 10))
         
-        ttk.Label(path_info_frame, text=trans['path_label'], font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
+        self.path_label_widget = ttk.Label(
+            path_info_frame,
+            text=trans['path_label'],
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.path_label_widget.pack(anchor=tk.W)
         self.path_label = ttk.Label(
             path_info_frame,
             text=self.save_path,
@@ -792,6 +851,16 @@ class ProductGeneratorGUI:
             command=self.close_callback if self.close_callback else self.root.quit
         )
         self.close_button.pack(side=tk.RIGHT, padx=5)
+
+        # Einstellungen gehören an den Anfang des Arbeitsbereichs.
+        self.options_frame.pack_forget()
+        self.options_frame.pack(
+            fill=tk.X,
+            expand=False,
+            padx=10,
+            pady=10,
+            before=self.search_frame,
+        )
         
         self.status_var = tk.StringVar(value=trans['status_ready'])
         status_bar = ttk.Label(
@@ -1081,6 +1150,10 @@ class ProductGeneratorGUI:
             self.language = value
             self.save_config()
             self.update_ui_language()
+            if self.language_callback:
+                self.language_callback(value)
+            if self.selected_variant is not None:
+                self.on_variant_selected()
 
     def on_font_size_changed(self):
         try:
@@ -1115,6 +1188,7 @@ class ProductGeneratorGUI:
         for button, label_key in self.provider_buttons.values():
             button.config(text=trans[label_key])
         self.options_frame.config(text=trans['options_frame'])
+        self.path_label_widget.config(text=trans['path_label'])
         self.language_label_widget.config(text=trans['language_label'])
         self.font_size_label_widget.config(text=trans['font_size_label'])
         self.save_button.config(text=trans['save_button'])
@@ -2214,36 +2288,57 @@ class TabbedProductGeneratorGUI:
 
         toolbar = ttk.Frame(root, padding=(8, 6))
         toolbar.pack(fill=tk.X)
-        ttk.Button(
+        self.new_tab_button = ttk.Button(
             toolbar,
             text=TRANSLATIONS['de']['new_tab'],
             command=self.add_tab,
-        ).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(
+        )
+        self.new_tab_button.pack(side=tk.LEFT, padx=(0, 6))
+        self.close_tab_button = ttk.Button(
             toolbar,
             text=TRANSLATIONS['de']['close_tab'],
             command=self.close_current_tab,
-        ).pack(side=tk.LEFT)
+        )
+        self.close_tab_button.pack(side=tk.LEFT)
 
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
 
-        menubar = tk.Menu(root)
-        settings_menu = tk.Menu(menubar, tearoff=0)
-        settings_menu.add_command(
+        self.menubar = tk.Menu(root)
+        self.settings_menu = tk.Menu(self.menubar, tearoff=0)
+        self.settings_menu.add_command(
             label=TRANSLATIONS['de']['menu_change_save_path'],
             command=lambda: self.run_on_active('change_save_path'),
         )
-        settings_menu.add_command(
+        self.settings_menu.add_command(
             label=TRANSLATIONS['de']['menu_default_save_path'],
             command=lambda: self.run_on_active('set_default_save_path'),
         )
-        menubar.add_cascade(
+        self.menubar.add_cascade(
             label=TRANSLATIONS['de']['menu_settings'],
-            menu=settings_menu,
+            menu=self.settings_menu,
         )
-        root.config(menu=menubar)
+        root.config(menu=self.menubar)
+        self.notebook.bind('<<NotebookTabChanged>>', self.on_tab_changed)
         self.add_tab()
+
+    def update_chrome_language(self, language):
+        trans = TRANSLATIONS.get(language, TRANSLATIONS['de'])
+        self.root.title(trans['title'])
+        self.new_tab_button.config(text=trans['new_tab'])
+        self.close_tab_button.config(text=trans['close_tab'])
+        self.settings_menu.entryconfig(
+            0, label=trans['menu_change_save_path']
+        )
+        self.settings_menu.entryconfig(
+            1, label=trans['menu_default_save_path']
+        )
+        self.menubar.entryconfig(0, label=trans['menu_settings'])
+
+    def on_tab_changed(self, *args):
+        controller = self.active_controller()
+        if controller:
+            self.update_chrome_language(controller.language)
 
     def run_on_active(self, method_name):
         controller = self.active_controller()
@@ -2264,7 +2359,15 @@ class TabbedProductGeneratorGUI:
             if tab_id not in self.controllers:
                 return
             clean_title = re.sub(r'\s+', ' ', title).strip()
-            label = clean_title[:42] if clean_title else f"Beitrag {tab_number}"
+            language = (
+                self.controllers[tab_id].language
+                if tab_id in self.controllers else 'de'
+            )
+            default_label = TRANSLATIONS[language]['tab_default']
+            label = (
+                clean_title[:42]
+                if clean_title else f"{default_label} {tab_number}"
+            )
             try:
                 self.notebook.tab(container, text=label)
             except tk.TclError:
@@ -2275,10 +2378,13 @@ class TabbedProductGeneratorGUI:
             embedded=True,
             close_callback=lambda: self.close_tab(container),
             title_callback=update_title,
+            language_callback=self.update_chrome_language,
         )
         self.controllers[tab_id] = controller
-        self.notebook.add(container, text=f"Beitrag {tab_number}")
+        default_label = TRANSLATIONS[controller.language]['tab_default']
+        self.notebook.add(container, text=f"{default_label} {tab_number}")
         self.notebook.select(container)
+        self.update_chrome_language(controller.language)
         return controller
 
     def close_current_tab(self):
