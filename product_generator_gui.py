@@ -1410,22 +1410,25 @@ class ProductGeneratorGUI:
         descriptions = []
         errors = []
         providers = []
-        if self.normalize_isbn(search_term):
+        direct_provider = self.provider_for_url(search_term)
+        if direct_provider:
+            providers.append(direct_provider)
+        elif self.normalize_isbn(search_term):
             providers.append(
                 ('Deutsche Nationalbibliothek', self.search_dnb_isbn)
             )
             providers.append(('ZVAB ISBN', self.search_zvab_isbn))
             providers.append(('Open Library', self.search_open_library))
             providers.append(('Google Books', self.search_google_books))
-        if enabled.get('web_suggestions'):
+        if not direct_provider and enabled.get('web_suggestions'):
             providers.append(('Web', self.search_web_suggestions))
-        if enabled.get('wikipedia'):
+        if not direct_provider and enabled.get('wikipedia'):
             providers.append(('Wikipedia', self.search_wikipedia))
-        if enabled.get('amazon'):
+        if not direct_provider and enabled.get('amazon'):
             providers.append(('Amazon', self.search_amazon))
-        if enabled.get('geizhals'):
+        if not direct_provider and enabled.get('geizhals'):
             providers.append(('Geizhals', self.search_geizhals))
-        if enabled.get('idealo'):
+        if not direct_provider and enabled.get('idealo'):
             providers.append(('Idealo', self.search_idealo))
         if providers:
             with ThreadPoolExecutor(max_workers=len(providers)) as executor:
@@ -1479,6 +1482,61 @@ class ProductGeneratorGUI:
                 search_term, request_id, unique_results, errors
             ),
         )
+
+    def provider_for_url(self, value):
+        """Routet Produktlinks ausschließlich an den passenden Importer."""
+        try:
+            parsed = urllib.parse.urlparse(value.strip())
+        except Exception:
+            return None
+        if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+            return None
+        host = parsed.netloc.casefold()
+        if 'amazon.' in host:
+            return ('Amazon-Link', self.search_amazon)
+        if 'geizhals.' in host:
+            return ('Geizhals-Link', self.search_geizhals)
+        if 'idealo.' in host:
+            return ('Idealo-Link', self.search_idealo)
+        return ('Produktlink', self.search_direct_product_url)
+
+    def search_direct_product_url(self, url):
+        """Importiert eine allgemeine Hersteller- oder Produktseite."""
+        html = self.fetch_url(url)
+        title = ''
+        for pattern in (
+            r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:title',
+            r'<h1[^>]*>(.*?)</h1>',
+            r'<title[^>]*>(.*?)</title>',
+        ):
+            match = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
+            if match:
+                title = self.clean_html_text(match.group(1))
+                if title:
+                    break
+        facts = []
+        for label, value in re.findall(
+            r'<dt[^>]*>(.*?)</dt>\s*<dd[^>]*>(.*?)</dd>',
+            html,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            clean_label = self.clean_html_text(label)
+            clean_value = self.clean_html_text(value)
+            if clean_label and clean_value:
+                facts.append(f"{clean_label}: {clean_value}")
+            if len(facts) >= 20:
+                break
+        if not facts:
+            description = re.search(
+                r'<meta[^>]+name=["\']description["\'][^>]+'
+                r'content=["\']([^"\']+)',
+                html,
+                re.IGNORECASE,
+            )
+            if description:
+                facts.append(self.clean_html_text(description.group(1)))
+        return [(title, '\n'.join(facts), url)] if title else []
 
     def apply_online_results(self, search_term, request_id, results, errors):
         """Übernimmt ausschließlich Ergebnisse der neuesten Suche."""
@@ -2405,8 +2463,20 @@ class ProductGeneratorGUI:
 
     @staticmethod
     def clean_html_text(value):
+        value = re.sub(
+            r'<(?:script|style)\b[^>]*>.*?</(?:script|style)>',
+            ' ',
+            value,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
         value = re.sub(r'<[^>]+>', ' ', value)
         value = html_lib.unescape(value)
+        value = re.sub(
+            r'\(function\([^)]*\)\s*\{.*?\}\)\);?',
+            ' ',
+            value,
+            flags=re.DOTALL,
+        )
         value = unicodedata.normalize('NFC', value)
         return re.sub(r'\s+', ' ', value).strip()
 

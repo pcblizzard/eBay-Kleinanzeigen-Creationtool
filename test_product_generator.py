@@ -373,6 +373,27 @@ class OnlineProviderTests(unittest.TestCase):
         self.assertEqual(results[0][0], "FANTEC Qb-X2US3R Gehäuse")
         self.assertEqual(results[0][2], "https://www.amazon.de/dp/B01GSWFOA4")
 
+    def test_amazon_product_url_is_routed_directly(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        provider_name, provider = gui.provider_for_url(
+            "https://www.amazon.de/Produktname/dp/B07Q9QLH55"
+        )
+        self.assertEqual(provider_name, "Amazon-Link")
+        self.assertEqual(provider.__func__, gui.search_amazon.__func__)
+
+    def test_generic_product_url_extracts_open_graph_data(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        html = """
+        <meta property="og:title" content="Hersteller Produkt X">
+        <meta name="description" content="Eine ausführliche Beschreibung">
+        """
+        with patch.object(gui, "fetch_url", return_value=html):
+            results = gui.search_direct_product_url(
+                "https://manufacturer.example/product-x"
+            )
+        self.assertEqual(results[0][0], "Hersteller Produkt X")
+        self.assertIn("ausführliche Beschreibung", results[0][1])
+
     def test_amazon_sponsored_results_are_excluded(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
         search_html = """

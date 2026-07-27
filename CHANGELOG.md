@@ -48,6 +48,10 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
   werden proportional auf den jeweils verfügbaren Platz skaliert.
 - Varianten können über das Rechtsklickmenü als unabhängige Kopie in einem
   neuen Tab geöffnet werden.
+- Vollständige Amazon-, Geizhals-, Idealo- und allgemeine Produktlinks können
+  direkt über das Suchfeld importiert werden.
+- Amazon-Linkimporte entfernen eingebettete JavaScriptfragmente aus
+  technischen Produktangaben.
 - Die Live-Vorschau zeigt das Cover in einer eigenen linken Spalte und den
   formatierten Beitrag vollständig im rechten Bereich.
 - Varianten können über das Rechtsklickmenü als unabhängige Kopie in einem

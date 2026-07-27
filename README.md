@@ -20,6 +20,8 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 ✅ **Produktcover**: Bild der ausgewählten Produktseite wird automatisch geladen  
 ✅ **Geteilte Vorschau**: Cover links, formatierter Verkaufstext rechts
 ✅ **Treffer in neuem Tab**: Varianten per Rechtsklick unabhängig öffnen
+✅ **Produktlink-Import**: Amazon-, Geizhals-, Idealo- und Herstellerlinks
+direkt in das Suchfeld einfügen
 ✅ **Quellen & Qualität**: Treffer zeigen Herkunft und geschätzte Übereinstimmung
 ✅ **Sitzungswiederherstellung**: Offene Tabs und Entwürfe werden automatisch gesichert
 ✅ **Buchkataloge**: ISBN-Metadaten zusätzlich über Open Library und Google Books
@@ -101,6 +103,12 @@ Markensuchen wie „Fantec“. Die Wikipedia-Livesuche nutzt die öffentliche
 MediaWiki-API und liefert Modellkandidaten mit deutsch- oder englischsprachigen
 Kurzbeschreibungen. Sie eignet sich besonders für bekannte Produktreihen, ersetzt
 aber keine technischen Herstellerdaten.
+
+Vollständige Produktlinks können direkt in das normale Suchfeld eingefügt
+werden. Links von Amazon, Geizhals und Idealo werden gezielt an den jeweiligen
+Importer übergeben; andere HTTP-/HTTPS-Produktseiten werden über strukturierte
+Seitentitel, Beschreibungen und Datenlisten ausgewertet. Bei Amazon übernimmt
+die Anwendung zusätzlich das hochauflösende `landingImage`, sofern verfügbar.
 
 ISBN-10 und ISBN-13 werden auch mit Bindestrichen erkannt, validiert und
 gegenseitig umgerechnet. Für Bücher fragt das Tool die Deutsche
