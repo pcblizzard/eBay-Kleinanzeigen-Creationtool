@@ -753,7 +753,10 @@ class ProductGeneratorGUI:
         )
         self.product_image_label.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         self._product_photo = None
+        self._product_image_original = None
+        self._cover_resize_after_id = None
         self._image_generation = 0
+        self.cover_panel.bind('<Configure>', self.on_cover_panel_resized)
 
         rendered_scrollbar = ttk.Scrollbar(self.rendered_text_panel)
         rendered_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -1110,6 +1113,7 @@ class ProductGeneratorGUI:
             return
         self._image_generation += 1
         self._product_photo = None
+        self._product_image_original = None
         self.product_image_label.config(
             image='',
             text=TRANSLATIONS[self.language]['no_product_image'],
@@ -1136,9 +1140,10 @@ class ProductGeneratorGUI:
                     return
                 image_data = self.fetch_binary(image_url)
                 image = Image.open(io.BytesIO(image_data))
-                image.thumbnail((240, 240), Image.Resampling.LANCZOS)
                 if image.mode not in ('RGB', 'RGBA'):
-                    image = image.convert('RGBA')
+                    image = image.convert('RGB')
+                else:
+                    image = image.copy()
             except Exception:
                 return
             self.root.after(
@@ -1157,7 +1162,36 @@ class ProductGeneratorGUI:
             or generation != self._image_generation
         ):
             return
-        photo = ImageTk.PhotoImage(image)
+        self._product_image_original = image
+        self.render_responsive_cover()
+
+    def on_cover_panel_resized(self, event=None):
+        """Skaliert das Bild verzögert mit der veränderbaren Cover-Spalte."""
+        if self._cover_resize_after_id is not None:
+            try:
+                self.root.after_cancel(self._cover_resize_after_id)
+            except tk.TclError:
+                pass
+        self._cover_resize_after_id = self.root.after(
+            80, self.render_responsive_cover
+        )
+
+    def render_responsive_cover(self):
+        self._cover_resize_after_id = None
+        image = self._product_image_original
+        if image is None or ImageTk is None:
+            return
+        available_width = max(80, self.cover_panel.winfo_width() - 16)
+        width, height = image.size
+        if width <= 0 or height <= 0:
+            return
+        scale = available_width / width
+        target = (
+            max(1, round(width * scale)),
+            max(1, round(height * scale)),
+        )
+        resized = image.resize(target, Image.Resampling.LANCZOS)
+        photo = ImageTk.PhotoImage(resized)
         self._product_photo = photo
         self.product_image_label.config(image=photo, text='')
 

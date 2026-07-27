@@ -44,6 +44,8 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
   `data-a-dynamic-image` gelesen; hochauflösende Varianten haben Vorrang.
 - Die Live-Vorschau zeigt das Cover in einer eigenen linken Spalte und den
   formatierten Beitrag vollständig im rechten Bereich.
+- Die Breite der Cover-Spalte ist per Trennbalken veränderbar; Produktbilder
+  werden proportional auf den jeweils verfügbaren Platz skaliert.
 - Varianten können über das Rechtsklickmenü als unabhängige Kopie in einem
   neuen Tab geöffnet werden.
 - Die Live-Vorschau zeigt das Cover in einer eigenen linken Spalte und den
