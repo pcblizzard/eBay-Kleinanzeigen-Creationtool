@@ -1495,10 +1495,46 @@ class ProductGeneratorGUI:
         if 'amazon.' in host:
             return ('Amazon-Link', self.search_amazon)
         if 'geizhals.' in host:
-            return ('Geizhals-Link', self.search_geizhals)
+            return ('Geizhals-Link', self.search_comparison_url_with_fallback)
         if 'idealo.' in host:
-            return ('Idealo-Link', self.search_idealo)
+            return ('Idealo-Link', self.search_comparison_url_with_fallback)
         return ('Produktlink', self.search_direct_product_url)
+
+    @staticmethod
+    def product_name_from_url(url):
+        path = urllib.parse.unquote(
+            urllib.parse.urlparse(url).path
+        ).rstrip('/')
+        slug = path.rsplit('/', 1)[-1]
+        slug = re.sub(r'\.(?:html?|php)$', '', slug, flags=re.IGNORECASE)
+        slug = re.sub(r'^\d+[_-]+', '', slug)
+        slug = re.sub(r'-v\d+$', '', slug, flags=re.IGNORECASE)
+        slug = re.sub(r'[_-]+', ' ', slug)
+        return re.sub(r'\s+', ' ', slug).strip()
+
+    def search_comparison_url_with_fallback(self, url):
+        """Nutzt bei blockierten Preisportalen alternative Produktquellen."""
+        is_idealo = 'idealo.' in urllib.parse.urlparse(url).netloc.casefold()
+        primary = self.search_idealo if is_idealo else self.search_geizhals
+        try:
+            results = primary(url)
+            if results:
+                return results
+        except Exception:
+            pass
+        query = self.product_name_from_url(url)
+        if not query:
+            return []
+        alternatives = []
+        providers = (
+            (self.search_geizhals,) if is_idealo else ()
+        ) + (self.search_amazon, self.search_wikipedia)
+        for provider in providers:
+            try:
+                alternatives.extend(provider(query))
+            except Exception:
+                continue
+        return self.merge_provider_results([alternatives])
 
     def search_direct_product_url(self, url):
         """Importiert eine allgemeine Hersteller- oder Produktseite."""

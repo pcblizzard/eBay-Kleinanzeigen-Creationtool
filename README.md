@@ -109,6 +109,8 @@ werden. Links von Amazon, Geizhals und Idealo werden gezielt an den jeweiligen
 Importer übergeben; andere HTTP-/HTTPS-Produktseiten werden über strukturierte
 Seitentitel, Beschreibungen und Datenlisten ausgewertet. Bei Amazon übernimmt
 die Anwendung zusätzlich das hochauflösende `landingImage`, sofern verfügbar.
+Blockiert Idealo oder Geizhals einen direkten Abruf, wird aus dem Link der
+Produktname abgeleitet und automatisch über die übrigen Produktquellen gesucht.
 
 ISBN-10 und ISBN-13 werden auch mit Bindestrichen erkannt, validiert und
 gegenseitig umgerechnet. Für Bücher fragt das Tool die Deutsche

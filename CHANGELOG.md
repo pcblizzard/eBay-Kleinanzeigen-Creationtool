@@ -52,6 +52,8 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
   direkt über das Suchfeld importiert werden.
 - Amazon-Linkimporte entfernen eingebettete JavaScriptfragmente aus
   technischen Produktangaben.
+- Blockierte Idealo-/Geizhals-Produktlinks fallen automatisch auf passende
+  Treffer aus den übrigen Produktquellen zurück.
 - Die Live-Vorschau zeigt das Cover in einer eigenen linken Spalte und den
   formatierten Beitrag vollständig im rechten Bereich.
 - Varianten können über das Rechtsklickmenü als unabhängige Kopie in einem

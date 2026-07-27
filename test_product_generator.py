@@ -394,6 +394,32 @@ class OnlineProviderTests(unittest.TestCase):
         self.assertEqual(results[0][0], "Hersteller Produkt X")
         self.assertIn("ausführliche Beschreibung", results[0][1])
 
+    def test_idealo_url_falls_back_to_other_product_sources(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        fallback = [(
+            "Marantz Melody X M-CR612",
+            "Technische Daten",
+            "https://geizhals.de/marantz-melody-x-m-cr612-v55384.html",
+        )]
+        with (
+            patch.object(gui, "search_idealo", side_effect=RuntimeError("503")),
+            patch.object(gui, "search_geizhals", return_value=fallback),
+            patch.object(gui, "search_amazon", return_value=[]),
+            patch.object(gui, "search_wikipedia", return_value=[]),
+        ):
+            results = gui.search_comparison_url_with_fallback(
+                "https://idealo.de/preisvergleich/OffersOfProduct/"
+                "6543906_-melody-x-m-cr612-marantz.html"
+            )
+        self.assertEqual(results, fallback)
+        self.assertEqual(
+            gui.product_name_from_url(
+                "https://idealo.de/preisvergleich/OffersOfProduct/"
+                "6543906_-melody-x-m-cr612-marantz.html"
+            ),
+            "melody x m cr612 marantz",
+        )
+
     def test_amazon_sponsored_results_are_excluded(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
         search_html = """
