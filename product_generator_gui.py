@@ -981,6 +981,12 @@ class ProductGeneratorGUI:
         idx = selection[0]
         if 0 <= idx < len(self.search_results):
             self.selected_variant = self.search_results[idx]['variant']
+            if 'amazon.' in self.selected_variant.get('source_url', ''):
+                self.selected_variant['name'] = (
+                    self.complete_known_title_fragment(
+                        self.selected_variant.get('name', '')
+                    )
+                )
             if self.title_callback:
                 self.title_callback(self.selected_variant['name'])
             
@@ -1590,6 +1596,15 @@ class ProductGeneratorGUI:
             )
             self.status_var.set(details)
             return
+        normalized_results = [
+            (
+                self.complete_known_title_fragment(title)
+                if 'amazon.' in source_url else title,
+                desc,
+                source_url,
+            )
+            for title, desc, source_url in results
+        ]
         online_results = [
             {
                 'group_id': 'online',
@@ -1603,7 +1618,7 @@ class ProductGeneratorGUI:
                     ),
                 },
             }
-            for title, desc, source_url in results
+            for title, desc, source_url in normalized_results
         ]
         existing = {
             re.sub(
@@ -2521,10 +2536,50 @@ class ProductGeneratorGUI:
         try:
             suggestions = self.search_web_suggestions(title)
         except Exception:
-            return title
-        return self.complete_truncated_title(
+            suggestions = []
+        repaired = self.complete_truncated_title(
             title, [candidate[0] for candidate in suggestions]
         )
+        return self.complete_known_title_fragment(repaired)
+
+    @staticmethod
+    def complete_known_title_fragment(title):
+        """Repariert eindeutige, bekannte Wortabbrüche ohne Netzwerkzugriff."""
+        words = title.split()
+        if not words:
+            return title
+        completions = {
+            'receiv': 'Receiver',
+            'verstärk': 'Verstärker',
+            'lautsprech': 'Lautsprecher',
+            'smartphon': 'Smartphone',
+            'kopfhör': 'Kopfhörer',
+            'netzwerkplay': 'Netzwerkplayer',
+        }
+        fragment = re.sub(r'\W+', '', words[-1]).casefold()
+        completion = completions.get(fragment)
+        if not completion:
+            return title
+        return ' '.join(words[:-1] + [completion])
+
+    @staticmethod
+    def repair_known_fragments_in_text(text):
+        replacements = {
+            'Receiv': 'Receiver',
+            'Verstärk': 'Verstärker',
+            'Lautsprech': 'Lautsprecher',
+            'Smartphon': 'Smartphone',
+            'Kopfhör': 'Kopfhörer',
+            'Netzwerkplay': 'Netzwerkplayer',
+        }
+        for fragment, completion in replacements.items():
+            text = re.sub(
+                rf'\b{re.escape(fragment)}\b',
+                completion,
+                text,
+                flags=re.IGNORECASE,
+            )
+        return text
 
     @staticmethod
     def is_unwanted_search_result(title, source_url=''):
@@ -3175,6 +3230,12 @@ class TabbedProductGeneratorGUI:
             controller._search_generation += 1
             variant = saved.get('variant')
             if isinstance(variant, dict) and variant.get('name'):
+                if 'amazon.' in variant.get('source_url', ''):
+                    variant['name'] = (
+                        controller.complete_known_title_fragment(
+                            variant['name']
+                        )
+                    )
                 controller.selected_variant = variant
                 controller.search_results = [{
                     'group_id': 'restored',
@@ -3183,7 +3244,14 @@ class TabbedProductGeneratorGUI:
                 controller.variant_listbox.delete(0, tk.END)
                 controller.variant_listbox.insert(tk.END, variant['name'])
                 controller.variant_listbox.selection_set(0)
+                if controller.title_callback:
+                    controller.title_callback(variant['name'])
             draft = str(saved.get('draft') or '')
+            if (
+                isinstance(variant, dict)
+                and 'amazon.' in variant.get('source_url', '')
+            ):
+                draft = controller.repair_known_fragments_in_text(draft)
             controller.preview_text.delete('1.0', tk.END)
             controller.preview_text.insert('1.0', draft)
             controller.render_live_preview()

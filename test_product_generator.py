@@ -406,6 +406,27 @@ class OnlineProviderTests(unittest.TestCase):
         )
         self.assertEqual(repaired, title)
 
+    def test_known_amazon_fragment_is_repaired_without_network(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        with patch.object(
+            gui,
+            "search_web_suggestions",
+            side_effect=RuntimeError("offline"),
+        ):
+            repaired = gui.repair_truncated_amazon_title(
+                "Marantz M-CR612 Melody X Netzwerk Receiv"
+            )
+        self.assertEqual(
+            repaired,
+            "Marantz M-CR612 Melody X Netzwerk Receiver",
+        )
+        self.assertIn(
+            "Netzwerk Receiver",
+            gui.repair_known_fragments_in_text(
+                "Zum Verkauf: Netzwerk Receiv"
+            ),
+        )
+
     def test_generic_product_url_extracts_open_graph_data(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
         html = """

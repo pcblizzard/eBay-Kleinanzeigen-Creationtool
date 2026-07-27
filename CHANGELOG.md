@@ -56,6 +56,9 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
   Treffer aus den übrigen Produktquellen zurück.
 - Nachweislich abgeschnittene Amazon-Titel werden nur bei einer eindeutigen
   Vervollständigung aus Webvorschlägen repariert.
+- Bekannte eindeutige Amazon-Wortabbrüche werden zusätzlich offline beim
+  Auswählen, bei Cachetreffern und beim Wiederherstellen alter Sitzungen
+  korrigiert.
 - Nachweislich abgeschnittene Amazon-Titel werden nur bei einer eindeutigen
   Vervollständigung aus Webvorschlägen repariert.
 - Die Live-Vorschau zeigt das Cover in einer eigenen linken Spalte und den
