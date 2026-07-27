@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 import difflib
+import copy
 import html as html_lib
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -93,6 +94,7 @@ TRANSLATIONS = {
         "copy_button": "📋 Beitrag kopieren",
         "copied_success": "Beitrag in die Zwischenablage kopiert",
         "export_button": "💾 Beitrag speichern",
+        "open_in_new_tab": "In neuem Tab öffnen",
     },
     "en": {
         "title": "eBay Classifieds - Product Description Generator",
@@ -152,6 +154,7 @@ TRANSLATIONS = {
         "copy_button": "📋 Copy listing",
         "copied_success": "Listing copied to clipboard",
         "export_button": "💾 Save listing",
+        "open_in_new_tab": "Open in new tab",
     }
 }
 
@@ -543,13 +546,14 @@ class ProductGeneratorGUI:
     
     def __init__(
         self, root, embedded=False, close_callback=None, title_callback=None,
-        language_callback=None
+        language_callback=None, variant_open_callback=None
     ):
         self.root = root
         self.embedded = embedded
         self.close_callback = close_callback
         self.title_callback = title_callback
         self.language_callback = language_callback
+        self.variant_open_callback = variant_open_callback
         self._closed = False
         if not embedded:
             self.root.geometry("900x750")
@@ -687,6 +691,12 @@ class ProductGeneratorGUI:
         scrollbar.config(command=self.variant_listbox.yview)
         
         self.variant_listbox.bind('<<ListboxSelect>>', self.on_variant_selected)
+        self.variant_listbox.bind('<Button-3>', self.show_variant_context_menu)
+        self.variant_context_menu = tk.Menu(self.variant_listbox, tearoff=0)
+        self.variant_context_menu.add_command(
+            label=trans['open_in_new_tab'],
+            command=self.open_selected_variant_in_new_tab,
+        )
         
         # ===== Frame 3: Vorschau =====
         self.preview_frame = ttk.LabelFrame(self.root, text=trans['preview_frame'], padding=10)
@@ -722,19 +732,33 @@ class ProductGeneratorGUI:
         self.preview_text.bind('<<Modified>>', self.on_draft_modified)
         self.preview_text.edit_modified(False)
 
-        self.product_image_label = ttk.Label(
+        rendered_panes = tk.PanedWindow(
             self.rendered_frame,
-            text=trans['no_product_image'],
-            anchor=tk.CENTER,
+            orient=tk.HORIZONTAL,
+            sashwidth=5,
+            background="#d9d9d9",
         )
-        self.product_image_label.pack(fill=tk.X, pady=(0, 6))
+        rendered_panes.pack(fill=tk.BOTH, expand=True)
+        self.cover_panel = ttk.Frame(rendered_panes, width=250)
+        self.rendered_text_panel = ttk.Frame(rendered_panes)
+        rendered_panes.add(self.cover_panel, minsize=180, width=250)
+        rendered_panes.add(
+            self.rendered_text_panel, stretch='always', minsize=300
+        )
+
+        self.product_image_label = ttk.Label(
+            self.cover_panel,
+            text=trans['no_product_image'],
+            anchor=tk.N,
+        )
+        self.product_image_label.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         self._product_photo = None
         self._image_generation = 0
 
-        rendered_scrollbar = ttk.Scrollbar(self.rendered_frame)
+        rendered_scrollbar = ttk.Scrollbar(self.rendered_text_panel)
         rendered_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.rendered_preview = tk.Text(
-            self.rendered_frame,
+            self.rendered_text_panel,
             yscrollcommand=rendered_scrollbar.set,
             font=("Segoe UI", max(10, self.font_size)),
             height=10,
@@ -1007,6 +1031,32 @@ class ProductGeneratorGUI:
             trans = TRANSLATIONS[self.language]
             self.status_var.set(f"{trans['selected_variant']} {self.selected_variant['name']}")
 
+    def show_variant_context_menu(self, event):
+        """Wählt den Treffer unter dem Mauszeiger und zeigt sein Kontextmenü."""
+        if not self.variant_listbox.size():
+            return
+        index = self.variant_listbox.nearest(event.y)
+        if not (0 <= index < len(self.search_results)):
+            return
+        self.variant_listbox.selection_clear(0, tk.END)
+        self.variant_listbox.selection_set(index)
+        self.variant_listbox.activate(index)
+        self.on_variant_selected()
+        self.variant_context_menu.tk_popup(event.x_root, event.y_root)
+
+    def open_selected_variant_in_new_tab(self):
+        selection = self.variant_listbox.curselection()
+        if (
+            not selection
+            or not self.variant_open_callback
+            or selection[0] >= len(self.search_results)
+        ):
+            return
+        self.variant_open_callback(
+            copy.deepcopy(self.search_results[selection[0]]),
+            self.search_var.get().strip(),
+        )
+
     def select_result_index(self, index):
         """Wählt einen Treffer und erzeugt sofort dessen Live-Entwurf."""
         if not (0 <= index < len(self.search_results)):
@@ -1263,6 +1313,9 @@ class ProductGeneratorGUI:
         self.provider_frame.config(text=trans['provider_frame'])
         for button, label_key in self.provider_buttons.values():
             button.config(text=trans[label_key])
+        self.variant_context_menu.entryconfig(
+            0, label=trans['open_in_new_tab']
+        )
         self.options_frame.config(text=trans['options_frame'])
         self.path_label_widget.config(text=trans['path_label'])
         self.language_label_widget.config(text=trans['language_label'])
@@ -2984,12 +3037,32 @@ class TabbedProductGeneratorGUI:
             close_callback=lambda: self.close_tab(container),
             title_callback=update_title,
             language_callback=self.update_chrome_language,
+            variant_open_callback=self.open_result_in_new_tab,
         )
         self.controllers[tab_id] = controller
         default_label = TRANSLATIONS[controller.language]['tab_default']
         self.notebook.add(container, text=f"{default_label} {tab_number}")
         self.notebook.select(container)
         self.update_chrome_language(controller.language)
+        return controller
+
+    def open_result_in_new_tab(self, result, query=''):
+        """Öffnet einen Treffer als unabhängige Kopie in einem neuen Tab."""
+        controller = self.add_tab()
+        variant = result.get('variant') or {}
+        search_text = query or variant.get('name', '')
+        controller.search_var.set(search_text)
+        if controller._search_after_id is not None:
+            controller.root.after_cancel(controller._search_after_id)
+            controller._search_after_id = None
+        controller._search_generation += 1
+        controller.search_results = [result]
+        controller.variant_listbox.delete(0, tk.END)
+        controller.variant_listbox.insert(
+            tk.END, controller.result_display_label(result)
+        )
+        controller.variant_listbox.selection_set(0)
+        controller.on_variant_selected()
         return controller
 
     def close_current_tab(self):

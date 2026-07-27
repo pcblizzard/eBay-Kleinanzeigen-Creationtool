@@ -42,6 +42,14 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
   erforderlichen API-Schlüssel.
 - Amazon-Produktbilder werden aus `landingImage`, `data-old-hires` und
   `data-a-dynamic-image` gelesen; hochauflösende Varianten haben Vorrang.
+- Die Live-Vorschau zeigt das Cover in einer eigenen linken Spalte und den
+  formatierten Beitrag vollständig im rechten Bereich.
+- Varianten können über das Rechtsklickmenü als unabhängige Kopie in einem
+  neuen Tab geöffnet werden.
+- Die Live-Vorschau zeigt das Cover in einer eigenen linken Spalte und den
+  formatierten Beitrag vollständig im rechten Bereich.
+- Varianten können über das Rechtsklickmenü als unabhängige Kopie in einem
+  neuen Tab geöffnet werden.
 
 ## [0.2.0] - 2026-07-27
 

@@ -18,6 +18,8 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 ✅ **ISBN-10/ISBN-13**: Deutsche Buchdaten über die Deutsche Nationalbibliothek  
 ✅ **Geteilte Bearbeitung**: Editor und formatierte Live-Vorschau nebeneinander  
 ✅ **Produktcover**: Bild der ausgewählten Produktseite wird automatisch geladen  
+✅ **Geteilte Vorschau**: Cover links, formatierter Verkaufstext rechts
+✅ **Treffer in neuem Tab**: Varianten per Rechtsklick unabhängig öffnen
 ✅ **Quellen & Qualität**: Treffer zeigen Herkunft und geschätzte Übereinstimmung
 ✅ **Sitzungswiederherstellung**: Offene Tabs und Entwürfe werden automatisch gesichert
 ✅ **Buchkataloge**: ISBN-Metadaten zusätzlich über Open Library und Google Books
