@@ -7,6 +7,7 @@ GUI-Version mit Dateiauswahl
 
 import json
 import io
+import hashlib
 import locale
 import os
 import base64
@@ -28,6 +29,8 @@ import urllib.parse
 import urllib.request
 import urllib.error
 import xml.etree.ElementTree as ET
+
+from listing_store import ListingStore, PLATFORM_PROFILES, safe_filename
 
 try:
     from PIL import Image, ImageTk
@@ -161,6 +164,34 @@ TRANSLATIONS = {
             "Kategorie-Vorschläge sind in der eBay-Sandbox nur Testdaten. "
             "Für echte Vorschläge Production verwenden."
         ),
+        "assistant_frame": "Inserat-Assistent",
+        "platform_label": "Plattform-Entwurf:",
+        "listing_title_label": "Anzeigentitel:",
+        "characters": "Zeichen",
+        "condition_label": "Zustand:",
+        "condition_values": (
+            "Bitte wählen|Neu|Wie neu|Sehr gut|Gut|Gebraucht|"
+            "Defekt / Ersatzteil"
+        ),
+        "scope_label": "Lieferumfang:",
+        "asking_price_label": "Wunschpreis (€):",
+        "price_basis_label": "Preisgrundlage:",
+        "price_active": "Aktive Vergleichsangebote",
+        "price_sold": "Tatsächlich verkaufte Angebote",
+        "apply_assistant": "Angaben in Entwürfe übernehmen",
+        "fact_conflicts": "Widersprüche prüfen",
+        "no_fact_conflicts": "Keine unbestätigten Datenkonflikte vorhanden.",
+        "confirm_fact": "Ausgewählten Wert bestätigen",
+        "completeness_ready": "Entwurf vollständig prüfbar",
+        "completeness_missing": "Noch zu prüfen:",
+        "export_package": "📦 Produktordner exportieren",
+        "export_success": "Produktordner erfolgreich erstellt:",
+        "limit_exceeded": "Zeichenlimit überschritten",
+        "price_active_notice": (
+            "Preisempfehlung basiert auf aktiven Vergleichsangeboten, "
+            "nicht auf abgeschlossenen Verkäufen."
+        ),
+        "database_label": "Lokale Produktdatenbank:",
     },
     "en": {
         "title": "eBay Classifieds - Product Description Generator",
@@ -278,6 +309,34 @@ TRANSLATIONS = {
             "eBay Sandbox category suggestions contain test data only. "
             "Use Production for real suggestions."
         ),
+        "assistant_frame": "Listing assistant",
+        "platform_label": "Platform draft:",
+        "listing_title_label": "Listing title:",
+        "characters": "characters",
+        "condition_label": "Condition:",
+        "condition_values": (
+            "Please select|New|Like new|Very good|Good|Used|"
+            "For parts / not working"
+        ),
+        "scope_label": "Included items:",
+        "asking_price_label": "Asking price (€):",
+        "price_basis_label": "Price basis:",
+        "price_active": "Active comparison listings",
+        "price_sold": "Actually sold listings",
+        "apply_assistant": "Apply details to drafts",
+        "fact_conflicts": "Review conflicts",
+        "no_fact_conflicts": "There are no unconfirmed data conflicts.",
+        "confirm_fact": "Confirm selected value",
+        "completeness_ready": "Draft is ready for review",
+        "completeness_missing": "Still to review:",
+        "export_package": "📦 Export product folder",
+        "export_success": "Product folder created:",
+        "limit_exceeded": "Character limit exceeded",
+        "price_active_notice": (
+            "The price suggestion is based on active comparison listings, "
+            "not completed sales."
+        ),
+        "database_label": "Local product database:",
     }
 }
 
@@ -705,6 +764,7 @@ class ProductGeneratorGUI:
         self._ebay_access_token = None
         self._ebay_access_token_expires = 0
         self._ebay_result_metadata = {}
+        self._market_result_metadata = {}
         self.ebay_environment = config.get('ebay_environment', 'production')
         if self.ebay_environment not in ('production', 'sandbox'):
             self.ebay_environment = 'production'
@@ -732,6 +792,15 @@ class ProductGeneratorGUI:
         self.ebay_categories = []
         self.ebay_aspects = []
         self.ebay_aspect_values = {}
+        data_root = Path(
+            os.environ.get('LOCALAPPDATA')
+            or (Path.home() / '.local' / 'share')
+        ) / 'eBay-Kleinanzeigen-Creationtool'
+        self.listing_store = ListingStore(data_root / 'listings.db')
+        self.product_record_id = ''
+        self.current_platform = 'kleinanzeigen'
+        self.platform_drafts = {}
+        self._switching_platform = False
         
         self.style = ttk.Style()
         theme = 'vista' if 'vista' in self.style.theme_names() else 'clam'
@@ -1011,6 +1080,96 @@ class ProductGeneratorGUI:
         )
         self.ebay_aspect_apply_button.pack(side=tk.LEFT, padx=(6, 0))
         self.ebay_check_frame.pack_forget()
+
+        # ===== Plattformneutraler Inserat-Assistent =====
+        self.assistant_frame = ttk.LabelFrame(
+            self.root, text=trans['assistant_frame'], padding=8
+        )
+        self.assistant_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        assistant_fields = ttk.Frame(self.assistant_frame)
+        assistant_fields.pack(fill=tk.X)
+        self.condition_var = tk.StringVar(
+            value=trans['condition_values'].split('|')[0]
+        )
+        self.scope_var = tk.StringVar()
+        self.asking_price_var = tk.StringVar()
+        self.price_basis_var = tk.StringVar(value='active')
+        self.price_basis_display_var = tk.StringVar(
+            value=trans['price_active']
+        )
+        for column in range(7):
+            assistant_fields.columnconfigure(
+                column, weight=1 if column in (1, 3) else 0
+            )
+        ttk.Label(
+            assistant_fields, text=trans['condition_label']
+        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 4))
+        self.condition_combo = ttk.Combobox(
+            assistant_fields,
+            textvariable=self.condition_var,
+            values=trans['condition_values'].split('|'),
+            state='readonly',
+            width=18,
+        )
+        self.condition_combo.grid(row=0, column=1, sticky=tk.EW, padx=(0, 10))
+        ttk.Label(
+            assistant_fields, text=trans['scope_label']
+        ).grid(row=0, column=2, sticky=tk.W, padx=(0, 4))
+        self.scope_entry = ttk.Entry(
+            assistant_fields, textvariable=self.scope_var
+        )
+        self.scope_entry.grid(row=0, column=3, sticky=tk.EW, padx=(0, 10))
+        ttk.Label(
+            assistant_fields, text=trans['asking_price_label']
+        ).grid(row=0, column=4, sticky=tk.W, padx=(0, 4))
+        self.asking_price_entry = ttk.Entry(
+            assistant_fields, textvariable=self.asking_price_var, width=10
+        )
+        self.asking_price_entry.grid(row=0, column=5, sticky=tk.W)
+        self.price_basis_combo = ttk.Combobox(
+            assistant_fields,
+            textvariable=self.price_basis_display_var,
+            values=(trans['price_active'], trans['price_sold']),
+            state='readonly',
+            width=8,
+        )
+        self.price_basis_combo.grid(row=0, column=6, sticky=tk.E, padx=(8, 0))
+
+        assistant_actions = ttk.Frame(self.assistant_frame)
+        assistant_actions.pack(fill=tk.X, pady=(6, 0))
+        self.apply_assistant_button = ttk.Button(
+            assistant_actions,
+            text=trans['apply_assistant'],
+            command=self.apply_assistant_details,
+        )
+        self.apply_assistant_button.pack(side=tk.LEFT)
+        self.fact_conflicts_button = ttk.Button(
+            assistant_actions,
+            text=trans['fact_conflicts'],
+            command=self.open_fact_conflicts,
+        )
+        self.fact_conflicts_button.pack(side=tk.LEFT, padx=(6, 0))
+        self.completeness_var = tk.StringVar()
+        ttk.Label(
+            assistant_actions, textvariable=self.completeness_var,
+            foreground='#555555',
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        self.price_summary_var = tk.StringVar()
+        ttk.Label(
+            self.assistant_frame, textvariable=self.price_summary_var,
+            foreground='#555555',
+        ).pack(fill=tk.X, pady=(5, 0))
+        self.price_basis_combo.bind(
+            '<<ComboboxSelected>>',
+            self.on_price_basis_changed,
+        )
+        for variable in (
+            self.condition_var, self.scope_var, self.asking_price_var
+        ):
+            variable.trace_add(
+                'write', lambda *args: self.update_listing_completeness()
+            )
+        self.assistant_frame.pack_forget()
         
         # ===== Frame 3: Vorschau =====
         self.preview_frame = ttk.LabelFrame(self.root, text=trans['preview_frame'], padding=10)
@@ -1029,6 +1188,55 @@ class ProductGeneratorGUI:
         )
         preview_panes.add(self.editor_frame, stretch='always', minsize=300)
         preview_panes.add(self.rendered_frame, stretch='always', minsize=300)
+
+        platform_row = ttk.Frame(self.editor_frame)
+        platform_row.pack(fill=tk.X, pady=(0, 5))
+        self.platform_label_widget = ttk.Label(
+            platform_row, text=trans['platform_label']
+        )
+        self.platform_label_widget.pack(side=tk.LEFT)
+        self.platform_var = tk.StringVar(
+            value=PLATFORM_PROFILES[self.current_platform].label_de
+        )
+        self.platform_combo = ttk.Combobox(
+            platform_row,
+            textvariable=self.platform_var,
+            values=tuple(
+                profile.label_de for profile in PLATFORM_PROFILES.values()
+            ),
+            state='readonly',
+            width=18,
+        )
+        self.platform_combo.pack(side=tk.LEFT, padx=(6, 10))
+        self.platform_combo.bind(
+            '<<ComboboxSelected>>', self.on_platform_changed
+        )
+        self.title_counter_var = tk.StringVar(value='0 / 65')
+        ttk.Label(
+            platform_row, textvariable=self.title_counter_var
+        ).pack(side=tk.RIGHT)
+
+        title_row = ttk.Frame(self.editor_frame)
+        title_row.pack(fill=tk.X, pady=(0, 5))
+        self.listing_title_label = ttk.Label(
+            title_row, text=trans['listing_title_label']
+        )
+        self.listing_title_label.pack(side=tk.LEFT)
+        self.platform_title_var = tk.StringVar()
+        self.platform_title_var.trace_add(
+            'write', self.on_platform_title_changed
+        )
+        self.platform_title_entry = ttk.Entry(
+            title_row, textvariable=self.platform_title_var
+        )
+        self.platform_title_entry.pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0)
+        )
+        self.description_counter_var = tk.StringVar(value='0 / 4000')
+        ttk.Label(
+            self.editor_frame, textvariable=self.description_counter_var,
+            anchor=tk.E,
+        ).pack(fill=tk.X, pady=(0, 3))
 
         scrollbar_text = ttk.Scrollbar(self.editor_frame)
         scrollbar_text.pack(side=tk.RIGHT, fill=tk.Y)
@@ -1413,6 +1621,9 @@ class ProductGeneratorGUI:
                 self.start_ebay_data_check(self.selected_variant)
             
             trans = TRANSLATIONS[self.language]
+            self.initialize_listing_assistant(
+                self.selected_variant, display_description
+            )
             self.status_var.set(f"{trans['selected_variant']} {self.selected_variant['name']}")
 
     def show_variant_context_menu(self, event):
@@ -1450,6 +1661,492 @@ class ProductGeneratorGUI:
         self.variant_listbox.activate(index)
         self.variant_listbox.see(index)
         self.on_variant_selected()
+
+    @staticmethod
+    def fit_platform_title(title, limit):
+        title = re.sub(r'\s+', ' ', str(title)).strip()
+        if len(title) <= limit:
+            return title
+        shortened = title[:limit + 1].rsplit(' ', 1)[0].rstrip(' -–,:')
+        return shortened or title[:limit]
+
+    @staticmethod
+    def platform_body_from_draft(draft):
+        value = str(draft or '').strip()
+        return re.sub(
+            r'^\*\*.+?\*\*\s*', '', value, count=1, flags=re.DOTALL
+        ).lstrip()
+
+    @staticmethod
+    def extract_structured_facts(description):
+        facts = []
+        for line in str(description or '').splitlines():
+            clean = re.sub(r'^\s*[•*\-]\s*', '', line).strip()
+            match = re.match(r'^([^:]{2,50}):\s*(.+)$', clean)
+            if match:
+                key = re.sub(r'\s+', ' ', match.group(1)).strip()
+                value = re.sub(r'\s+', ' ', match.group(2)).strip()
+                if key and value:
+                    facts.append((key, value))
+        return facts
+
+    def initialize_listing_assistant(self, variant, draft):
+        """Öffnet/erstellt die zentrale Produktakte für den Treffer."""
+        identifier = ''
+        for key in ('ean', 'isbn', 'gtin', 'ebay_item_id'):
+            value = variant.get(key)
+            if isinstance(value, (list, tuple)):
+                value = value[0] if value else ''
+            if value:
+                identifier = str(value)
+                break
+        product_id = self.listing_store.upsert_product(
+            variant.get('name', 'Produkt'),
+            identifier=identifier,
+            source_url=variant.get('source_url', ''),
+            state=None,
+        )
+        new_product = product_id != self.product_record_id
+        self.product_record_id = product_id
+        source = self.source_name(variant.get('source_url', ''))
+        description = variant.get('description', '')
+        if isinstance(description, dict):
+            description = description.get(
+                self.language, description.get('de', '')
+            )
+        for key, value in self.extract_structured_facts(description):
+            self.listing_store.add_fact(
+                product_id, key, value, source,
+                variant.get('source_url', ''),
+            )
+        for key, value in (
+            variant.get('ebay_aspect_values') or {}
+        ).items():
+            self.listing_store.add_fact(
+                product_id, key, value, 'eBay',
+                variant.get('source_url', ''),
+            )
+        price = variant.get('comparison_price')
+        if price and not variant.get('_price_recorded'):
+            self.listing_store.add_price(
+                product_id, source or 'Online', price,
+                condition=variant.get('comparison_condition', ''),
+                kind='active', shipping=variant.get('comparison_shipping'),
+                source_url=variant.get('source_url', ''),
+            )
+            variant['_price_recorded'] = True
+        if new_product:
+            stored_state = self.listing_store.product_state(product_id)
+            stored = self.listing_store.load_drafts(product_id)
+            self.platform_drafts = {
+                key: {
+                    'title': value['title'],
+                    # Gespeicherte Pflichttexte bleiben im Export, nicht Editor.
+                    'description': self.strip_generated_legal(
+                        value['description']
+                    ),
+                }
+                for key, value in stored.items()
+            }
+            for key, profile in PLATFORM_PROFILES.items():
+                if key not in self.platform_drafts:
+                    body = self.platform_body_from_draft(draft)
+                    if key == 'ebay_mobile':
+                        body = self.mobile_draft(body)
+                    elif key in ('kleinanzeigen', 'ebay'):
+                        body = self.fit_platform_body(
+                            body, profile.description_limit
+                        )
+                    self.platform_drafts[key] = {
+                        'title': self.fit_platform_title(
+                            variant.get('name', 'Produkt'),
+                            profile.title_limit,
+                        ),
+                        'description': body,
+                    }
+            self.current_platform = 'kleinanzeigen'
+            self.platform_var.set(
+                PLATFORM_PROFILES[self.current_platform].label_de
+            )
+            self.load_platform_draft(self.current_platform)
+            self.condition_var.set(
+                variant.get('listing_condition')
+                or stored_state.get('condition')
+                or TRANSLATIONS[self.language][
+                    'condition_values'
+                ].split('|')[0]
+            )
+            self.scope_var.set(
+                variant.get('listing_scope')
+                or stored_state.get('scope', '')
+            )
+            self.asking_price_var.set(
+                str(
+                    variant.get('asking_price')
+                    or stored_state.get('asking_price', '')
+                )
+            )
+            self.price_basis_var.set(
+                stored_state.get('price_basis', 'active')
+            )
+            self.price_basis_display_var.set(
+                TRANSLATIONS[self.language][
+                    'price_sold' if self.price_basis_var.get() == 'sold'
+                    else 'price_active'
+                ]
+            )
+        else:
+            # Nachgeladene Details aktualisieren nur einen noch unveränderten
+            # automatisch erzeugten Entwurf.
+            current = self.platform_drafts.get(self.current_platform, {})
+            current_text = current.get('description', '')
+            if (
+                not current_text
+                or current_text == draft
+                or current_text.startswith((
+                    'Amazon-Suchergebnis:',
+                    'Online gefunden:',
+                    'Web-Suchvorschlag',
+                ))
+            ):
+                current['description'] = self.platform_body_from_draft(draft)
+                self.load_platform_draft(self.current_platform)
+        self.assistant_frame.pack(
+            fill=tk.X, padx=10, pady=(0, 10),
+            before=self.preview_frame,
+        )
+        self.update_listing_counters()
+        self.update_price_summary()
+        self.update_listing_completeness()
+
+    def strip_generated_legal(self, text):
+        marker = '\n\n---\n\n' + self.legal_clause
+        value = str(text)
+        if marker in value:
+            return value.split(marker, 1)[0].rstrip()
+        return value
+
+    def mobile_draft(self, body):
+        """Erzeugt ohne neue Behauptungen eine kompakte mobile Vorschau."""
+        limit = PLATFORM_PROFILES['ebay_mobile'].description_limit
+        legal = self.legal_clause.strip()
+        available = max(80, limit - len(legal) - 10)
+        paragraphs = []
+        used = 0
+        for paragraph in re.split(r'\n\s*\n', str(body).strip()):
+            plain = paragraph.strip()
+            if not plain:
+                continue
+            addition = len(plain) + (2 if paragraphs else 0)
+            if used + addition > available:
+                break
+            paragraphs.append(plain)
+            used += addition
+        return '\n\n'.join(paragraphs)
+
+    def fit_platform_body(self, body, description_limit):
+        """Kürzt nur an Absatz-/Zeilengrenzen und erfindet keine Inhalte."""
+        available = max(
+            100, description_limit - len(self.legal_clause.strip()) - 10
+        )
+        value = str(body).strip()
+        if len(value) <= available:
+            return value
+        selected = []
+        used = 0
+        for block in re.split(r'(\n\s*\n|\n)', value):
+            if not block:
+                continue
+            addition = len(block)
+            if used + addition > available:
+                continue
+            selected.append(block)
+            used += addition
+        return ''.join(selected).strip()
+
+    def on_platform_changed(self, event=None):
+        if self._switching_platform:
+            return
+        selected_label = self.platform_var.get()
+        wanted = next(
+            (
+                key for key, profile in PLATFORM_PROFILES.items()
+                if profile.label_de == selected_label
+            ),
+            '',
+        )
+        if not wanted:
+            return
+        self.save_visible_platform_draft()
+        self.current_platform = wanted
+        self.load_platform_draft(wanted)
+
+    def save_visible_platform_draft(self):
+        if (
+            not hasattr(self, 'preview_text')
+            or not self.product_record_id
+        ):
+            return
+        self.platform_drafts[self.current_platform] = {
+            'title': self.platform_title_var.get().strip(),
+            'description': self.preview_text.get(
+                '1.0', tk.END
+            ).strip(),
+        }
+
+    def load_platform_draft(self, platform):
+        draft = self.platform_drafts.get(platform)
+        if not draft:
+            return
+        self._switching_platform = True
+        self.platform_title_var.set(draft['title'])
+        self.preview_text.delete('1.0', tk.END)
+        self.preview_text.insert('1.0', draft['description'])
+        self.preview_text.edit_modified(False)
+        self._switching_platform = False
+        self.render_live_preview()
+        self.update_listing_counters()
+
+    def on_platform_title_changed(self, *args):
+        if not self._switching_platform:
+            self.update_listing_counters()
+
+    def full_platform_description(self, body=None):
+        if body is None:
+            body = self.preview_text.get('1.0', tk.END).strip()
+        return f"{str(body).rstrip()}\n\n---\n\n{self.legal_clause.strip()}"
+
+    def update_listing_counters(self):
+        if not hasattr(self, 'platform_title_var'):
+            return
+        profile = PLATFORM_PROFILES[self.current_platform]
+        title_length = len(self.platform_title_var.get())
+        description_length = len(self.full_platform_description())
+        self.title_counter_var.set(
+            f"{title_length} / {profile.title_limit}"
+        )
+        self.description_counter_var.set(
+            f"{description_length} / {profile.description_limit} "
+            f"{TRANSLATIONS[self.language]['characters']}"
+        )
+
+    def platform_limit_errors(self, platform=None, title=None, body=None):
+        platform = platform or self.current_platform
+        profile = PLATFORM_PROFILES[platform]
+        title = (
+            self.platform_title_var.get().strip()
+            if title is None else str(title).strip()
+        )
+        body = (
+            self.preview_text.get('1.0', tk.END).strip()
+            if body is None else str(body).strip()
+        )
+        errors = []
+        if not title:
+            errors.append('Titel')
+        if len(title) > profile.title_limit:
+            errors.append(
+                f"Titel {len(title)}/{profile.title_limit}"
+            )
+        full = self.full_platform_description(body)
+        if len(full) > profile.description_limit:
+            errors.append(
+                f"Beschreibung {len(full)}/{profile.description_limit}"
+            )
+        return errors
+
+    def apply_assistant_details(self):
+        if not self.selected_variant or not self.product_record_id:
+            return
+        self.save_visible_platform_draft()
+        trans = TRANSLATIONS[self.language]
+        unselected = trans['condition_values'].split('|')[0]
+        condition = self.condition_var.get().strip()
+        scope = self.scope_var.get().strip()
+        price = self.asking_price_var.get().strip()
+        lines = []
+        if condition and condition != unselected:
+            lines.append(
+                f"* {'Zustand' if self.language == 'de' else 'Condition'}: "
+                f"{condition}"
+            )
+        if scope:
+            lines.append(
+                f"* {'Lieferumfang' if self.language == 'de' else 'Included'}: "
+                f"{scope}"
+            )
+        if price:
+            normalized_price = price.replace(',', '.')
+            try:
+                float(normalized_price)
+            except ValueError:
+                messagebox.showwarning(
+                    trans['assistant_frame'],
+                    trans['asking_price_label'],
+                )
+                return
+            lines.append(
+                f"* {'Preisvorstellung' if self.language == 'de' else 'Asking price'}: "
+                f"{price.replace('.', ',')} €"
+            )
+        heading = (
+            '### Angaben zum angebotenen Artikel'
+            if self.language == 'de'
+            else '### Details of the offered item'
+        )
+        pattern = (
+            r'\n*### (?:Angaben zum angebotenen Artikel|'
+            r'Details of the offered item)\n.*?(?=\n### |\Z)'
+        )
+        for platform, draft in self.platform_drafts.items():
+            body = re.sub(
+                pattern, '', draft['description'],
+                flags=re.DOTALL,
+            ).rstrip()
+            if lines:
+                body += f"\n\n{heading}\n\n" + '\n'.join(lines)
+            if platform == 'ebay_mobile':
+                body = self.mobile_draft(body)
+            draft['description'] = body
+            self.persist_platform_draft(platform, draft)
+        self.selected_variant['listing_condition'] = (
+            '' if condition == unselected else condition
+        )
+        self.selected_variant['listing_scope'] = scope
+        self.selected_variant['asking_price'] = price
+        self.listing_store.update_product_state(
+            self.product_record_id,
+            {
+                'condition': self.selected_variant['listing_condition'],
+                'scope': scope,
+                'asking_price': price,
+                'price_basis': self.price_basis_var.get(),
+            },
+        )
+        self.load_platform_draft(self.current_platform)
+        self.update_listing_completeness()
+
+    def persist_platform_draft(self, platform, draft):
+        self.listing_store.save_draft(
+            self.product_record_id,
+            platform,
+            draft['title'],
+            self.full_platform_description(draft['description']),
+        )
+
+    def update_listing_completeness(self):
+        if not hasattr(self, 'completeness_var'):
+            return
+        trans = TRANSLATIONS[self.language]
+        missing = []
+        unselected = trans['condition_values'].split('|')[0]
+        if self.condition_var.get() in ('', unselected):
+            missing.append(trans['condition_label'].rstrip(':'))
+        if not self.scope_var.get().strip():
+            missing.append(trans['scope_label'].rstrip(':'))
+        if not self.asking_price_var.get().strip():
+            missing.append(trans['asking_price_label'].rstrip(':'))
+        if self.product_record_id and self.listing_store.conflicts(
+            self.product_record_id
+        ):
+            missing.append(trans['fact_conflicts'])
+        errors = self.platform_limit_errors()
+        missing.extend(errors)
+        self.completeness_var.set(
+            f"{trans['completeness_missing']} {', '.join(missing)}"
+            if missing else trans['completeness_ready']
+        )
+
+    def update_price_summary(self):
+        if not hasattr(self, 'price_summary_var'):
+            return
+        if not self.product_record_id:
+            self.price_summary_var.set('')
+            return
+        kind = self.price_basis_var.get()
+        summary = self.listing_store.price_summary(
+            self.product_record_id, kind
+        )
+        trans = TRANSLATIONS[self.language]
+        if not summary.get('count'):
+            self.price_summary_var.set(
+                trans['price_active_notice']
+                if kind == 'active'
+                else 'Keine verlässlichen verkauften Preise verfügbar.'
+            )
+            return
+        label = (
+            trans['price_active'] if kind == 'active'
+            else trans['price_sold']
+        )
+        self.price_summary_var.set(
+            f"{label}: {summary['count']} Treffer · "
+            f"Median {summary['median']:.2f} € · "
+            f"{summary['minimum']:.2f}–{summary['maximum']:.2f} €"
+            + (
+                f" · {trans['price_active_notice']}"
+                if kind == 'active' else ''
+            )
+        )
+
+    def on_price_basis_changed(self, event=None):
+        trans = TRANSLATIONS[self.language]
+        self.price_basis_var.set(
+            'sold'
+            if self.price_basis_display_var.get() == trans['price_sold']
+            else 'active'
+        )
+        self.update_price_summary()
+
+    def open_fact_conflicts(self):
+        trans = TRANSLATIONS[self.language]
+        conflicts = (
+            self.listing_store.conflicts(self.product_record_id)
+            if self.product_record_id else {}
+        )
+        if not conflicts:
+            messagebox.showinfo(
+                trans['fact_conflicts'], trans['no_fact_conflicts']
+            )
+            return
+        window = tk.Toplevel(self.root)
+        window.title(trans['fact_conflicts'])
+        window.geometry('720x360')
+        tree = ttk.Treeview(
+            window, columns=('key', 'value', 'source'),
+            show='headings', selectmode='browse'
+        )
+        for column, text, width in (
+            ('key', 'Angabe', 180),
+            ('value', 'Wert', 340),
+            ('source', 'Quelle', 160),
+        ):
+            tree.heading(column, text=text)
+            tree.column(column, width=width)
+        for key, values in conflicts.items():
+            for fact in values:
+                tree.insert(
+                    '', tk.END,
+                    values=(key, fact['value'], fact['source'])
+                )
+        tree.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        def confirm():
+            selection = tree.selection()
+            if not selection:
+                return
+            key, value, _ = tree.item(
+                selection[0], 'values'
+            )
+            self.listing_store.confirm_fact(
+                self.product_record_id, key, value
+            )
+            window.destroy()
+            self.update_listing_completeness()
+
+        ttk.Button(
+            window, text=trans['confirm_fact'], command=confirm
+        ).pack(pady=(0, 8))
 
     def reset_ebay_data_check(self):
         """Leert die eBay-Prüfung, ohne andere Tab-Zustände zu verändern."""
@@ -1568,6 +2265,12 @@ class ProductGeneratorGUI:
             })
             self.ebay_aspect_values.update(details.get('aspect_values') or {})
             variant['ebay_aspect_values'] = dict(self.ebay_aspect_values)
+            if self.product_record_id:
+                for key, value in self.ebay_aspect_values.items():
+                    self.listing_store.add_fact(
+                        self.product_record_id, key, value, 'eBay',
+                        variant.get('source_url', ''),
+                    )
             image_urls = details.get('image_urls') or []
             if image_urls:
                 variant['image_urls'] = image_urls
@@ -1736,6 +2439,10 @@ class ProductGeneratorGUI:
         if not self.preview_text.edit_modified():
             return
         self.preview_text.edit_modified(False)
+        if not self._switching_platform and self.product_record_id:
+            self.save_visible_platform_draft()
+            self.update_listing_counters()
+            self.update_listing_completeness()
         self.render_live_preview()
 
     def render_live_preview(self):
@@ -2239,6 +2946,24 @@ class ProductGeneratorGUI:
         ):
             self.ebay_aspect_tree.heading(column, text=trans[label_key])
         self.preview_frame.config(text=trans['preview_frame'])
+        self.assistant_frame.config(text=trans['assistant_frame'])
+        self.platform_label_widget.config(text=trans['platform_label'])
+        self.listing_title_label.config(text=trans['listing_title_label'])
+        self.apply_assistant_button.config(text=trans['apply_assistant'])
+        self.fact_conflicts_button.config(text=trans['fact_conflicts'])
+        self.condition_combo.configure(
+            values=trans['condition_values'].split('|')
+        )
+        self.price_basis_combo.configure(
+            values=(trans['price_active'], trans['price_sold'])
+        )
+        self.price_basis_display_var.set(
+            trans[
+                'price_sold'
+                if self.price_basis_var.get() == 'sold'
+                else 'price_active'
+            ]
+        )
         self.editor_frame.config(text=trans['editor_label'])
         self.rendered_frame.config(text=trans['live_preview_label'])
         self.previous_image_button.config(text=trans['previous_image'])
@@ -2301,6 +3026,25 @@ class ProductGeneratorGUI:
         cached = self._search_cache.get(cache_key)
         if cached and time.monotonic() - cached[0] < self._search_cache_ttl:
             results, errors = cached[1], cached[2]
+            self.root.after(
+                0,
+                lambda: self.apply_online_results(
+                    search_term, request_id, results, errors
+                ),
+            )
+            return
+        persistent_key = 'search:' + hashlib.sha256(
+            json.dumps(
+                cache_key, ensure_ascii=False, sort_keys=True
+            ).encode('utf-8')
+        ).hexdigest()
+        persistent = self.listing_store.cache_get(persistent_key)
+        if persistent:
+            results = [tuple(item) for item in persistent.get('results', [])]
+            errors = list(persistent.get('errors', []))
+            self._search_cache[cache_key] = (
+                time.monotonic(), results, errors
+            )
             self.root.after(
                 0,
                 lambda: self.apply_online_results(
@@ -2382,6 +3126,11 @@ class ProductGeneratorGUI:
             )
         self._search_cache[cache_key] = (
             time.monotonic(), unique_results, errors
+        )
+        self.listing_store.cache_put(
+            persistent_key,
+            {'results': unique_results, 'errors': errors},
+            self._search_cache_ttl,
         )
         self.root.after(
             0,
@@ -2520,6 +3269,9 @@ class ProductGeneratorGUI:
                     **copy.deepcopy(
                         self._ebay_result_metadata.get(source_url, {})
                     ),
+                    **copy.deepcopy(
+                        self._market_result_metadata.get(source_url, {})
+                    ),
                 },
             }
             for title, desc, source_url in normalized_results
@@ -2580,6 +3332,7 @@ class ProductGeneratorGUI:
         )
         self.preview_text.delete(1.0, tk.END)
         self.preview_text.insert(1.0, sales_draft)
+        self.initialize_listing_assistant(variant, sales_draft)
         self.status_var.set(
             f"{TRANSLATIONS[self.language]['selected_variant']} {variant['name']}"
         )
@@ -2955,12 +3708,30 @@ class ProductGeneratorGUI:
                     "Standort des Vergleichsangebots: "
                     f"{location.get('city') or location.get('name')}"
                 )
+            source_url = ad.get('ad_url') or (
+                f"https://www.kleinanzeigen.de/s-anzeige/{ad.get('ad_id', '')}"
+            )
+            price = ad.get('price') or {}
+            if source_url:
+                if not hasattr(self, '_market_result_metadata'):
+                    self._market_result_metadata = {}
+                self._market_result_metadata[source_url] = {
+                    'comparison_price': price.get('amount'),
+                    'comparison_condition': self.normalize_text(
+                        details.get('Zustand', '')
+                        if isinstance(details, dict) else ''
+                    ),
+                    'image_urls': [
+                        image.get('url') or image.get('src')
+                        for image in ad.get('images') or []
+                        if isinstance(image, dict)
+                        and (image.get('url') or image.get('src'))
+                    ],
+                }
             results.append((
                 title,
                 '\n'.join(facts) or "Öffentliches Kleinanzeigen-Vergleichsangebot",
-                ad.get('ad_url') or (
-                    f"https://www.kleinanzeigen.de/s-anzeige/{ad.get('ad_id', '')}"
-                ),
+                source_url,
             ))
         return results
 
@@ -3114,6 +3885,25 @@ class ProductGeneratorGUI:
                     for candidate in [image] + additional_images
                     if candidate.get('imageUrl')
                 ],
+                'comparison_price': (
+                    float((item.get('price') or {}).get('value'))
+                    if (item.get('price') or {}).get('value')
+                    else None
+                ),
+                'comparison_condition': item.get('condition', ''),
+                'comparison_shipping': (
+                    float(
+                        ((item.get('shippingOptions') or [{}])[0].get(
+                            'shippingCost'
+                        ) or {}).get('value')
+                    )
+                    if (
+                        (item.get('shippingOptions') or [{}])[0].get(
+                            'shippingCost'
+                        ) or {}
+                    ).get('value')
+                    else None
+                ),
             }
             if source_url:
                 if not hasattr(self, '_ebay_result_metadata'):
@@ -4129,12 +4919,25 @@ class ProductGeneratorGUI:
                 trans['no_selection']
             )
             return
+
+        self.save_visible_platform_draft()
+        draft = self.platform_drafts.get(self.current_platform, {})
+        errors = self.platform_limit_errors(
+            self.current_platform,
+            draft.get('title', ''),
+            draft.get('description', ''),
+        )
+        if errors:
+            messagebox.showwarning(
+                trans['limit_exceeded'], '\n'.join(errors)
+            )
+            return
+        self.persist_platform_draft(self.current_platform, draft)
         
         # Listing generieren
-        edited_description = self.preview_text.get("1.0", tk.END).strip()
-        listing = self.generator.generate_listing(
-            self.selected_variant, self.language, edited_description,
-            self.legal_clause,
+        listing = (
+            f"{draft.get('title', '').strip()}\n\n"
+            f"{self.full_platform_description(draft.get('description', ''))}\n"
         )
         
         # Speichern im separaten Thread um GUI nicht zu blockieren
@@ -4144,9 +4947,10 @@ class ProductGeneratorGUI:
                 if self.opened_file_path:
                     filepath = Path(self.opened_file_path)
                 else:
-                    filename = self.selected_variant['name'].replace(
-                        '/', '_'
-                    ).replace('\\', '_').replace(':', '')
+                    filename = (
+                        f"{safe_filename(draft.get('title') or self.selected_variant['name'])}"
+                        f"-{self.current_platform}"
+                    )
                     filepath = Path(self.save_path) / f"{filename}.txt"
 
                     # Neue Beiträge überschreiben keine vorhandenen Dateien.
@@ -4184,16 +4988,99 @@ class ProductGeneratorGUI:
         thread = threading.Thread(target=save_async, daemon=True)
         thread.start()
 
+    def export_product_package(self):
+        """Exportiert getrennte Plattformtexte und die aktuelle Bildergalerie."""
+        trans = TRANSLATIONS[self.language]
+        if not self.selected_variant or not self.product_record_id:
+            messagebox.showwarning(
+                trans['no_selection'], trans['no_selection']
+            )
+            return
+        self.save_visible_platform_draft()
+        problems = []
+        for platform, draft in self.platform_drafts.items():
+            errors = self.platform_limit_errors(
+                platform, draft['title'], draft['description']
+            )
+            if errors:
+                problems.extend(
+                    f"{PLATFORM_PROFILES[platform].label_de}: {error}"
+                    for error in errors
+                )
+            self.persist_platform_draft(platform, draft)
+        if problems:
+            messagebox.showwarning(
+                trans['limit_exceeded'], '\n'.join(problems)
+            )
+            return
+        output_root = filedialog.askdirectory(
+            title=trans['export_package'],
+            initialdir=self.save_path,
+        )
+        if not output_root:
+            return
+        product_id = self.product_record_id
+        image_urls = list(self.selected_variant.get('image_urls') or [])
+
+        def worker():
+            try:
+                folder = self.listing_store.export_package(
+                    product_id, output_root
+                )
+                for index, url in enumerate(image_urls, 1):
+                    try:
+                        data = self.fetch_binary(url)
+                        suffix = (
+                            Path(urllib.parse.urlparse(url).path).suffix.lower()
+                        )
+                        if suffix not in ('.jpg', '.jpeg', '.png', '.webp'):
+                            suffix = '.jpg'
+                        name = (
+                            f"{index:02d}-hauptbild{suffix}"
+                            if index == 1 else
+                            f"{index:02d}-produktbild{suffix}"
+                        )
+                        (folder / name).write_bytes(data)
+                    except Exception:
+                        continue
+            except Exception as exc:
+                self.root.after(
+                    0, lambda error=str(exc): messagebox.showerror(
+                        trans['save_error'], error
+                    )
+                )
+                return
+            self.root.after(
+                0, lambda: messagebox.showinfo(
+                    trans['export_package'],
+                    f"{trans['export_success']}\n\n{folder}",
+                )
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def copy_listing(self):
         """Kopiert den vollständigen Beitrag inklusive Pflichttext."""
         trans = TRANSLATIONS[self.language]
         if not self.selected_variant:
             messagebox.showwarning(trans['no_selection'], trans['no_selection'])
             return
-        edited = self.preview_text.get("1.0", tk.END).strip()
-        listing = self.generator.generate_listing(
-            self.selected_variant, self.language, edited,
-            self.legal_clause,
+        self.save_visible_platform_draft()
+        draft = self.platform_drafts.get(self.current_platform, {})
+        errors = self.platform_limit_errors(
+            self.current_platform,
+            draft.get('title', ''),
+            draft.get('description', ''),
+        )
+        if errors:
+            messagebox.showwarning(
+                trans['limit_exceeded'], '\n'.join(errors)
+            )
+            return
+        self.persist_platform_draft(self.current_platform, draft)
+        listing = (
+            f"{draft.get('title', '').strip()}\n\n"
+            f"{self.full_platform_description(draft.get('description', ''))}"
         )
         self.root.clipboard_clear()
         self.root.clipboard_append(listing)
@@ -4252,6 +5139,12 @@ class TabbedProductGeneratorGUI:
             command=lambda: self.run_on_active('copy_listing'),
         )
         self.copy_button.pack(side=tk.LEFT)
+        self.package_button = ttk.Button(
+            toolbar,
+            text=TRANSLATIONS['de']['export_package'],
+            command=lambda: self.run_on_active('export_product_package'),
+        )
+        self.package_button.pack(side=tk.LEFT, padx=(6, 0))
 
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
@@ -4294,6 +5187,7 @@ class TabbedProductGeneratorGUI:
         self.close_tab_button.config(text=trans['close_tab'])
         self.export_button.config(text=trans['export_button'])
         self.copy_button.config(text=trans['copy_button'])
+        self.package_button.config(text=trans['export_package'])
         self.file_menu.entryconfig(0, label=trans['menu_new'])
         self.file_menu.entryconfig(1, label=trans['menu_open'])
         self.file_menu.entryconfig(2, label=trans['menu_save'])
@@ -4362,6 +5256,7 @@ class TabbedProductGeneratorGUI:
         controller.variant_listbox.selection_set(0)
         controller.preview_text.delete('1.0', tk.END)
         controller.preview_text.insert('1.0', text)
+        controller.initialize_listing_assistant(variant, text)
         controller.render_live_preview()
         if controller.title_callback:
             controller.title_callback(product_name)
@@ -4558,6 +5453,20 @@ class TabbedProductGeneratorGUI:
             text=trans['session_clear_on_exit'],
             variable=clear_session_var,
         ).pack(anchor=tk.W)
+        try:
+            database_size = controller.listing_store.path.stat().st_size
+        except OSError:
+            database_size = 0
+        ttk.Label(
+            session_frame,
+            text=(
+                f"{trans['database_label']} "
+                f"{controller.listing_store.path} "
+                f"({database_size / 1024:.1f} KB)"
+            ),
+            foreground='#555555',
+            wraplength=600,
+        ).pack(anchor=tk.W, pady=(6, 0))
 
         font_row = ttk.Frame(content)
         font_row.pack(fill=tk.X, pady=(0, 12))
@@ -4820,6 +5729,12 @@ class TabbedProductGeneratorGUI:
                 ).rstrip(),
                 'language': controller.language,
                 'opened_file_path': controller.opened_file_path,
+                'platform': controller.current_platform,
+                'platform_drafts': controller.platform_drafts,
+                'condition': controller.condition_var.get(),
+                'scope': controller.scope_var.get(),
+                'asking_price': controller.asking_price_var.get(),
+                'price_basis': controller.price_basis_var.get(),
             })
         return {
             'active': self.notebook.index(self.notebook.select())
@@ -4903,6 +5818,41 @@ class TabbedProductGeneratorGUI:
                 draft = controller.repair_known_fragments_in_text(draft)
             controller.preview_text.delete('1.0', tk.END)
             controller.preview_text.insert('1.0', draft)
+            if isinstance(variant, dict) and variant.get('name'):
+                controller.initialize_listing_assistant(variant, draft)
+                saved_drafts = saved.get('platform_drafts')
+                if isinstance(saved_drafts, dict) and saved_drafts:
+                    controller.platform_drafts = saved_drafts
+                platform = saved.get('platform', 'kleinanzeigen')
+                if platform in PLATFORM_PROFILES:
+                    controller.current_platform = platform
+                    controller.platform_var.set(
+                        PLATFORM_PROFILES[platform].label_de
+                    )
+                controller.condition_var.set(
+                    saved.get('condition')
+                    or TRANSLATIONS[controller.language][
+                        'condition_values'
+                    ].split('|')[0]
+                )
+                controller.scope_var.set(str(saved.get('scope') or ''))
+                controller.asking_price_var.set(
+                    str(saved.get('asking_price') or '')
+                )
+                controller.price_basis_var.set(
+                    saved.get('price_basis', 'active')
+                )
+                controller.price_basis_display_var.set(
+                    TRANSLATIONS[controller.language][
+                        'price_sold'
+                        if controller.price_basis_var.get() == 'sold'
+                        else 'price_active'
+                    ]
+                )
+                controller.load_platform_draft(
+                    controller.current_platform
+                )
+                controller.update_listing_completeness()
             controller.render_live_preview()
         active = min(max(int(data.get('active', 0)), 0), len(tabs) - 1)
         self.notebook.select(self.notebook.tabs()[active])
@@ -4913,6 +5863,11 @@ class TabbedProductGeneratorGUI:
             self.delete_session_file()
         else:
             self.save_session()
+        for controller in self.controllers.values():
+            try:
+                controller.listing_store.close()
+            except Exception:
+                pass
         self.root.destroy()
 
     def add_tab(self):

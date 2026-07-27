@@ -30,6 +30,13 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 - ✅ **eBay-Kategorievorschläge**: Passende Kategorien über die aktuelle Taxonomy API
 - ✅ **eBay-Artikelmerkmale**: Pflicht-, empfohlene und optionale Angaben dynamisch prüfen
 - ✅ **eBay-Datenprüfung**: Fehlende Pflichtmerkmale vor einem späteren Export sichtbar machen
+- ✅ **Inserat-Assistent**: Zustand, Lieferumfang, Preis und Vollständigkeit zentral prüfen
+- ✅ **Plattform-Entwürfe**: Kleinanzeigen, eBay, ausführliches eBay und mobile eBay-Vorschau unabhängig bearbeiten
+- ✅ **Zeichenlimits**: 65/4.000 für Kleinanzeigen sowie 80/4.000, 80/500.000 und 80/800 für eBay-Profile
+- ✅ **Lokale Produktakte**: SQLite speichert Fakten, Quellen, Konflikte, Preise, Cache und Entwurfsversionen
+- ✅ **Konfliktprüfung**: Abweichende Angaben werden vor einer Bestätigung hervorgehoben
+- ✅ **Preisvergleich**: Aktive und tatsächlich verkaufte Vergleichspreise bleiben klar getrennt
+- ✅ **Produktordner**: Plattformtexte, Bilder und interne Nachweise gemeinsam exportieren
 - ✅ **Sichere API-Zugangsdaten**: Speicherung im Betriebssystem-Schlüsselspeicher
 - ✅ **Sicherheitskontrollen**: Keyring-Prüfung, Verbindungstests und Secret-Löschung
 - ✅ **Geschützte Webimporte**: Größenlimits und Sperre lokaler Netzwerkziele
@@ -52,6 +59,52 @@ python product_generator_gui.py
 ```
 
 ### Workflow:
+
+1. Produktname, ISBN, EAN/GTIN oder Produktlink suchen.
+2. Variante auswählen und gefundene Fakten beziehungsweise Konflikte prüfen.
+3. Zustand, Lieferumfang und Wunschpreis im Inserat-Assistenten ergänzen.
+4. Zwischen Kleinanzeigen-, eBay-, ausführlichem eBay- und mobilem eBay-Entwurf
+   wechseln. Jeder Entwurf wird unabhängig gespeichert.
+5. Zeichenanzeigen und Vollständigkeitshinweise prüfen.
+6. Mit **Produktordner exportieren** alle Plattformtexte und verfügbaren Bilder
+   in einem gemeinsamen Ordner ausgeben.
+
+Die Standardgrenzen sind 65 Zeichen für einen Kleinanzeigen-Titel und 4.000
+Zeichen für dessen Beschreibung. eBay-Titel sind auf 80 Zeichen begrenzt. Das
+normale eBay-Profil verwendet die mit `product.description` kompatiblen 4.000
+Zeichen; das ausführliche Angebotsprofil erlaubt bis zu 500.000 Zeichen und die
+mobile Kurzvorschau bis zu 800 Zeichen.
+
+### Lokale Produktdatenbank
+
+Die SQLite-Datei `listings.db` liegt im lokalen Anwendungsdatenverzeichnis und
+wird im Einstellungsdialog einschließlich ihrer aktuellen Größe angezeigt.
+Gespeichert werden nur Texte, Quellen, Zustände, Preise, Konfliktentscheidungen,
+Cache-Einträge und Bildpfade. Bilddateien selbst liegen außerhalb der Datenbank.
+Dadurch bleibt sie üblicherweise auch bei vielen hundert Beiträgen nur wenige
+Megabyte groß.
+
+Technische Produktdaten werden länger, Suchergebnisse und Preise nur kurz
+zwischengespeichert. Aktive Vergleichspreise sind ausdrücklich keine
+tatsächlich erzielten Verkaufspreise. Sind keine verlässlichen abgeschlossenen
+Verkäufe vorhanden, weist die Oberfläche darauf hin.
+
+Der Produktordner bleibt für den Endbenutzer übersichtlich:
+
+```text
+Samsung Galaxy S23/
+├── beitrag-kleinanzeigen.txt
+├── beitrag-ebay.txt
+├── beitrag-ebay-ausfuehrlich.txt
+├── beitrag-ebay-mobil.txt
+├── 01-hauptbild.jpg
+└── .creationtool/
+    ├── produktdaten.json
+    └── quellen.txt
+```
+
+Der interne `.creationtool`-Ordner enthält Quellen und maschinenlesbare
+Produktdaten; die sichtbaren Verkaufsdateien bleiben davon unabhängig.
 
 1. **Produktname eingeben** → Echtzeit-Suche lädt Varianten
 2. **Variante auswählen** → Live-Vorschau erscheint

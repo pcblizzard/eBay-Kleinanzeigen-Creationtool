@@ -2,6 +2,22 @@
 
 ## Unveröffentlicht
 
+- Plattformneutralen Inserat-Assistenten für Zustand, Lieferumfang, Wunschpreis
+  und Vollständigkeit ergänzt.
+- Vier voneinander unabhängige Entwürfe für Kleinanzeigen, eBay, ausführliche
+  eBay-Beschreibungen und die mobile 800-Zeichen-Vorschau ergänzt.
+- Plattformgrenzen werden live gezählt und vor Speichern, Kopieren und
+  Paketexport verbindlich geprüft.
+- Lokale SQLite-Produktakte für Produktzustand, Quellenfakten, Konflikte,
+  Preisvergleiche, Suchcache und versionierte Entwürfe ergänzt; Bilder verbleiben
+  als normale Dateien.
+- Aktive Vergleichspreise und tatsächlich verkaufte Preise werden getrennt
+  gespeichert und beschriftet; fehlende Verkaufsdaten werden nicht durch aktive
+  Angebote ersetzt.
+- Abweichende Werte derselben Produktangabe können im Konfliktdialog gezielt
+  bestätigt, andere Werte verworfen werden.
+- Neuer Produktordner-Export schreibt plattformspezifische Texte, verfügbare
+  Produktbilder sowie interne Produkt- und Quellennachweise.
 - Bereits sicher gespeicherte Marktplatz-Zugangsdaten werden in den Eingabefeldern
   durch einen festen Maskierungsplatzhalter sichtbar gemacht. Der Platzhalter
   kann weder gespeichert noch für einen Verbindungstest als Schlüssel verwendet

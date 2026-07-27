@@ -37,7 +37,7 @@ Repository = "https://github.com/yourusername/eBay_Kleinanzeigen.git"
 "Bug Tracker" = "https://github.com/yourusername/eBay_Kleinanzeigen/issues"
 
 [tool.setuptools]
-py-modules = ["product_generator_gui"]
+py-modules = ["product_generator_gui", "listing_store"]
 
 [project.scripts]
 ebay-creationtool = "product_generator_gui:main"

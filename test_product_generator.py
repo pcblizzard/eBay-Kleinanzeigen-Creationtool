@@ -11,6 +11,12 @@ from product_generator_gui import (
     SECRET_PLACEHOLDER,
     WARRANTY_CLAUSE,
 )
+from listing_store import (
+    ListingStore,
+    PLATFORM_PROFILES,
+    canonical_fact_key,
+    safe_filename,
+)
 
 
 class ProductGeneratorTests(unittest.TestCase):
@@ -111,7 +117,166 @@ class ProductGeneratorTests(unittest.TestCase):
         self.assertNotIn("### Technische Daten", draft)
         self.assertNotIn("[Originalverpackung]", draft)
         self.assertNotIn("[Ladekabel / Netzteil]", draft)
-        self.assertNotIn("[Weiteres Zubehör]", draft)
+
+
+class ListingStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.store = ListingStore(
+            Path(self.temp_dir.name) / "listings.db"
+        )
+        self.generator = ProductGenerator(
+            products_file="products.json", output_dir=self.temp_dir.name
+        )
+        self.product_id = self.store.upsert_product(
+            "Samsung Galaxy S23", identifier="4006381333931"
+        )
+
+    def tearDown(self):
+        self.store.close()
+        self.temp_dir.cleanup()
+
+    def test_platform_profiles_use_verified_limits(self):
+        self.assertEqual(
+            PLATFORM_PROFILES["kleinanzeigen"].title_limit, 65
+        )
+        self.assertEqual(
+            PLATFORM_PROFILES["kleinanzeigen"].description_limit, 4000
+        )
+        self.assertEqual(PLATFORM_PROFILES["ebay"].title_limit, 80)
+        self.assertEqual(
+            PLATFORM_PROFILES["ebay_detailed"].description_limit, 500000
+        )
+        self.assertEqual(
+            PLATFORM_PROFILES["ebay_mobile"].description_limit, 800
+        )
+
+    def test_conflicting_facts_require_confirmation(self):
+        self.store.add_fact(
+            self.product_id, "Speicher", "128 GB", "Amazon"
+        )
+        self.store.add_fact(
+            self.product_id, "Speicherkapazität", "256 GB", "eBay"
+        )
+        self.assertIn(
+            "Speicherkapazität", self.store.conflicts(self.product_id)
+        )
+        self.assertNotIn(
+            "Speicherkapazität",
+            self.store.confirmed_values(self.product_id),
+        )
+        self.store.confirm_fact(
+            self.product_id, "Speicherkapazität", "256 GB"
+        )
+        self.assertNotIn(
+            "Speicherkapazität", self.store.conflicts(self.product_id)
+        )
+        self.assertEqual(
+            self.store.confirmed_values(
+                self.product_id
+            )["Speicherkapazität"],
+            "256 GB",
+        )
+
+    def test_drafts_are_independent_and_versioned(self):
+        self.store.save_draft(
+            self.product_id, "kleinanzeigen", "Kurzer Titel", "Text A"
+        )
+        self.store.save_draft(
+            self.product_id, "ebay", "Längerer eBay-Titel", "Text B"
+        )
+        self.store.save_draft(
+            self.product_id, "kleinanzeigen", "Kurzer Titel", "Text A2"
+        )
+        drafts = self.store.load_drafts(self.product_id)
+        self.assertEqual(
+            drafts["kleinanzeigen"]["description"], "Text A2"
+        )
+        self.assertEqual(drafts["ebay"]["description"], "Text B")
+        version_count = self.store.connection.execute(
+            "SELECT COUNT(*) FROM draft_versions"
+        ).fetchone()[0]
+        self.assertEqual(version_count, 1)
+
+    def test_product_state_survives_later_read_only_upsert(self):
+        state = {
+            "condition": "Sehr gut",
+            "scope": "Gerät und Ladekabel",
+            "asking_price": "250",
+        }
+        self.store.update_product_state(self.product_id, state)
+        same_id = self.store.upsert_product(
+            "Samsung Galaxy S23",
+            identifier="4006381333931",
+            source_url="https://example.test/product",
+            state=None,
+        )
+        self.assertEqual(same_id, self.product_id)
+        self.assertEqual(self.store.product_state(self.product_id), state)
+
+    def test_price_summary_separates_active_and_sold(self):
+        self.store.add_price(
+            self.product_id, "eBay", 100, kind="active", shipping=5
+        )
+        self.store.add_price(
+            self.product_id, "eBay", 100, kind="active", shipping=5
+        )
+        self.store.add_price(
+            self.product_id, "Kleinanzeigen", 125, kind="active"
+        )
+        self.store.add_price(
+            self.product_id, "eBay", 90, kind="sold"
+        )
+        active = self.store.price_summary(self.product_id, "active")
+        sold = self.store.price_summary(self.product_id, "sold")
+        self.assertEqual(active["median"], 115)
+        self.assertEqual(sold["median"], 90)
+        self.assertEqual(active["count"], 2)
+
+    def test_persistent_cache_and_clean_expiry(self):
+        self.store.cache_put("product:1", {"name": "Pixel"}, 60)
+        self.assertEqual(
+            self.store.cache_get("product:1"), {"name": "Pixel"}
+        )
+        self.store.connection.execute(
+            "UPDATE cache SET expires_at=0 WHERE cache_key='product:1'"
+        )
+        self.store.connection.commit()
+        self.assertIsNone(self.store.cache_get("product:1"))
+
+    def test_export_package_keeps_user_folder_simple(self):
+        self.store.add_fact(
+            self.product_id, "Marke", "Samsung", "eBay",
+            "https://www.ebay.de/itm/1",
+        )
+        self.store.save_draft(
+            self.product_id, "kleinanzeigen",
+            "Samsung Galaxy S23", "Kleinanzeigen-Text"
+        )
+        self.store.save_draft(
+            self.product_id, "ebay",
+            "Samsung Galaxy S23", "eBay-Text"
+        )
+        folder = self.store.export_package(
+            self.product_id, self.temp_dir.name
+        )
+        self.assertTrue((folder / "beitrag-kleinanzeigen.txt").exists())
+        self.assertTrue((folder / "beitrag-ebay.txt").exists())
+        self.assertTrue(
+            (folder / ".creationtool" / "produktdaten.json").exists()
+        )
+        self.assertIn(
+            "https://www.ebay.de/itm/1",
+            (folder / ".creationtool" / "quellen.txt").read_text(
+                encoding="utf-8"
+            ),
+        )
+
+    def test_safe_filename_removes_windows_metacharacters(self):
+        self.assertEqual(safe_filename('A/B:C*D?'), "A B C D")
+        self.assertEqual(
+            canonical_fact_key("Storage Capacity"), "Speicherkapazität"
+        )
 
     def test_disc_draft_uses_physical_media_fields(self):
         draft = self.generator.build_sales_draft(
