@@ -1,0 +1,38 @@
+{
+  "products": [
+    {
+      "id": "galaxy_s26",
+      "variants": [
+        {
+          "name": "Samsung Galaxy S26",
+          "description": "Display: 6,1\" AMOLED 120Hz\nProzessor: Snapdragon 8 Elite\nKamera: 50MP Hauptkamera, 12MP Ultra-Wide\nAkkumulator: 4000 mAh mit 25W Schnellladen\nBesonderheiten: Leichte Kratzer auf dem Displayschutz vorhanden."
+        },
+        {
+          "name": "Samsung Galaxy S26 Plus",
+          "description": "Display: 6,7\" AMOLED 120Hz\nProzessor: Snapdragon 8 Elite\nKamera: 50MP Hauptkamera, 12MP Ultra-Wide, 10MP Telefoto\nAkkumulator: 4500 mAh mit 45W Schnellladen\nBesonderheiten: Neuwertig, kaum benutzt."
+        },
+        {
+          "name": "Samsung Galaxy S26 Ultra",
+          "description": "Display: 6,8\" AMOLED 144Hz Dynamic\nProzessor: Snapdragon 8 Elite\nKamera: 200MP Hauptkamera, 50MP Ultra-Wide, 10MP + 10MP Telefoto\nAkkumulator: 5000 mAh mit 65W Schnellladen\nBesonderheiten: Top-Zustand, OVP vorhanden."
+        }
+      ]
+    },
+    {
+      "id": "iphone_16",
+      "variants": [
+        {
+          "name": "Apple iPhone 16",
+          "description": "Display: 6,1\" Super Retina XDR\nProzessor: A18 Chip\nKamera: 48MP Dual-Kamera\nAkkumulator: 3460 mAh mit 20W Schnellladen\nBesonderheiten: Sehr guter Zustand."
+        },
+        {
+          "name": "Apple iPhone 16 Plus",
+          "description": "Display: 6,7\" Super Retina XDR\nProzessor: A18 Chip\nKamera: 48MP Dual-Kamera\nAkkumulator: 4685 mAh mit 20W Schnellladen\nBesonderheiten: Neuwertig."
+        },
+        {
+          "name": "Apple iPhone 16 Pro",
+          "description": "Display: 6,3\" Super Retina XDR\nProzessor: A18 Pro\nKamera: 48MP + 12MP Ultra-Wide + 12MP Telefoto\nAkkumulator: 3823 mAh mit 25W Schnellladen\nBesonderheiten: Premium Zustand, wie neu."
+        }
+      ]
+    }
+  ]
+}
