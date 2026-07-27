@@ -864,6 +864,42 @@ class OnlineProviderTests(unittest.TestCase):
         )
         self.assertEqual(repaired, title)
 
+    def test_asin_is_read_from_the_product_segment_only(self):
+        asin = ProductGeneratorGUI.amazon_asin
+        # Der Slug endet auf ein zehn Zeichen langes Wortende direkt vor dem
+        # Schraegstrich; es darf nicht als ASIN gelesen werden.
+        self.assertEqual(
+            asin(
+                "https://www.amazon.de/QB-X2US3R-Festplattengeh%C3%A4use-"
+                "Festplatten-SUPERSPEED-temperaturgeregelt/dp/B01GSWFOA4"
+            ),
+            "B01GSWFOA4",
+        )
+        self.assertEqual(
+            asin("https://www.amazon.de/dp/B01GSWFOA4?ref=x&th=1"),
+            "B01GSWFOA4",
+        )
+        self.assertEqual(
+            asin("https://www.amazon.de/gp/product/B01GSWFOA4/"),
+            "B01GSWFOA4",
+        )
+        self.assertEqual(asin("B01GSWFOA4"), "B01GSWFOA4")
+        # Ohne Produktsegment wird nicht geraten.
+        self.assertEqual(asin("https://www.amazon.de/s?k=festplatte"), "")
+        self.assertEqual(asin("Samsung Galaxy S23"), "")
+
+    def test_amazon_urls_without_asin_become_a_real_query(self):
+        query = ProductGeneratorGUI.amazon_search_query
+        self.assertEqual(
+            query("https://www.amazon.de/s?k=Fantec+QB-X2US3R"),
+            "Fantec QB-X2US3R",
+        )
+        self.assertEqual(
+            query("https://www.amazon.de/Fantec-QB-X2US3R-Gehaeuse/b/12345"),
+            "Fantec QB X2US3R Gehaeuse",
+        )
+        self.assertEqual(query("Fantec QB-X2US3R"), "Fantec QB-X2US3R")
+
     def test_known_amazon_fragment_is_repaired_without_network(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
         with patch.object(

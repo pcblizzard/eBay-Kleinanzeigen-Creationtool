@@ -4621,22 +4621,73 @@ class ProductGeneratorGUI:
             self._search_amazon_once, search_term
         )
 
+    @staticmethod
+    def amazon_asin(value):
+        """Liest die ASIN aus einer Amazon-URL oder einer reinen ASIN-Eingabe.
+
+        Die Produktkennung wird ausschliesslich am ``/dp/``- oder
+        ``/gp/product/``-Segment erkannt. Ein optionales Praefix wuerde in
+        einem Slug wie ``…-temperaturgeregelt/dp/B01GSWFOA4`` das zehn Zeichen
+        lange Wortende vor dem Schraegstrich als ASIN missdeuten.
+        """
+        text = str(value or '').strip()
+        marker = re.search(
+            r'/(?:dp|gp/product|gp/aw/d|product)/([A-Za-z0-9]{10})'
+            r'(?![A-Za-z0-9])',
+            text,
+        )
+        if marker:
+            return marker.group(1).upper()
+        if 'amazon.' in text.casefold():
+            # Amazon-Link ohne erkennbares Produktsegment: nicht raten.
+            return ''
+        if re.fullmatch(r'[A-Za-z0-9]{10}', text) and re.search(r'\d', text):
+            return text.upper()
+        return ''
+
+    @classmethod
+    def amazon_search_query(cls, search_term):
+        """Macht aus einer Amazon-URL ohne ASIN einen brauchbaren Suchbegriff.
+
+        Ohne diese Umwandlung wuerde wortwoertlich nach der URL gesucht.
+        """
+        text = str(search_term or '').strip()
+        parsed = urllib.parse.urlparse(text)
+        if parsed.scheme not in ('http', 'https'):
+            return text
+        keywords = urllib.parse.parse_qs(parsed.query).get('k', [''])[0].strip()
+        if keywords:
+            return keywords
+        # Der sprechende Teil steht bei Amazon vorne, nicht im letzten
+        # Segment: /Fantec-QB-X2US3R-Gehaeuse/b/12345
+        segments = [
+            urllib.parse.unquote(segment)
+            for segment in parsed.path.split('/') if segment
+        ]
+        descriptive = [
+            segment for segment in segments
+            if segment.lower() not in ('dp', 'gp', 'product', 'b', 'd', 'aw')
+            and not segment.isdigit()
+            and re.search(r'[^\W\d_]', segment)
+        ]
+        if not descriptive:
+            return ''
+        best = max(descriptive, key=len)
+        best = re.sub(r'\.(?:html?|php)$', '', best, flags=re.IGNORECASE)
+        return re.sub(r'\s+', ' ', re.sub(r'[_-]+', ' ', best)).strip()
+
     def _search_amazon_once(self, search_term):
         """Sucht Amazon.de und extrahiert Fakten aus Produktseiten."""
-        asin_match = re.search(
-            r'(?:/dp/|/gp/product/)?([A-Z0-9]{10})(?:[/?]|$)',
-            search_term.upper(),
-        )
-        if asin_match and (
-            'AMAZON.' in search_term.upper()
-            or re.fullmatch(r'[A-Z0-9]{10}', search_term.strip().upper())
-        ):
-            asin = asin_match.group(1)
+        asin = self.amazon_asin(search_term)
+        if asin:
             source_url = f"https://www.amazon.de/dp/{asin}"
             title, description = self.extract_amazon_product(self.fetch_url(source_url))
             title = self.repair_truncated_amazon_title(title)
             return [(title, description, source_url)] if title else []
 
+        search_term = self.amazon_search_query(search_term)
+        if not search_term:
+            return []
         query = urllib.parse.quote_plus(search_term)
         html = self.fetch_url(f"https://www.amazon.de/s?k={query}")
         self.raise_for_amazon_block(html)
