@@ -157,7 +157,12 @@ Amazon-Produktseiten werden neben dem Hauptbild auch nach den Galerieeinträgen
 `hiRes`, `large` und `mainUrl` ausgewertet. Bis zu 20 unterschiedliche Bilder
 werden in der Cover-Spalte angeboten. Pfeiltasten wechseln das aktuelle Bild,
 der Zähler zeigt die Position und **Bild speichern…** lädt auf ausdrücklichen
-Wunsch die angezeigte Originaldatei in einen gewählten Ordner. Bilder werden
+Wunsch die angezeigte Originaldatei in einen gewählten Ordner. Amazon-
+Thumbnail- und Auflösungsvarianten desselben Galerieeintrags zählen dabei nicht
+als zusätzliche Bilder. Gespeicherte Dateien erhalten fortlaufende Endungen wie
+`_01.jpg`, `_02.jpg` und so weiter. Die Darstellung skaliert nach verfügbarer
+Breite und Höhe, damit die Galeriebuttons auch in kleineren Fenstern sichtbar
+bleiben. Bilder werden
 nicht automatisch dauerhaft gespeichert. Nutzungs- und Veröffentlichungsrechte
 an Bildern müssen unabhängig davon beachtet werden.
 

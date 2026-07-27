@@ -949,6 +949,20 @@ class ProductGeneratorGUI:
             state=tk.DISABLED,
         )
         self.save_image_button.pack(fill=tk.X, padx=6, pady=(0, 6))
+        # Die Bedienelemente werden zuerst vom unteren Rand reserviert.
+        # Dadurch kann ein großes Bild sie in kleinen Fenstern nicht verdrängen.
+        self.product_image_label.pack_forget()
+        self.image_controls.pack_forget()
+        self.save_image_button.pack_forget()
+        self.save_image_button.pack(
+            side=tk.BOTTOM, fill=tk.X, padx=6, pady=(0, 6)
+        )
+        self.image_controls.pack(
+            side=tk.BOTTOM, fill=tk.X, padx=6, pady=(0, 6)
+        )
+        self.product_image_label.pack(
+            fill=tk.BOTH, expand=True, padx=6, pady=6
+        )
         self._product_photo = None
         self._product_image_original = None
         self._product_image_urls = []
@@ -1456,10 +1470,13 @@ class ProductGeneratorGUI:
             if self.selected_variant else 'Produktbild'
         )
         safe_name = re.sub(r'[<>:"/\\|?*]+', '_', product_name).strip(' .')
+        image_number = max(1, self._product_image_index + 1)
         filename = filedialog.asksaveasfilename(
             title=TRANSLATIONS[self.language]['save_image_title'],
             initialdir=self.save_path,
-            initialfile=f"{safe_name or 'Produktbild'}{extension}",
+            initialfile=(
+                f"{safe_name or 'Produktbild'}_{image_number:02d}{extension}"
+            ),
             defaultextension=extension,
             filetypes=[
                 ("Bilddateien", "*.jpg *.jpeg *.png *.webp"),
@@ -1497,10 +1514,13 @@ class ProductGeneratorGUI:
         if image is None or ImageTk is None:
             return
         available_width = max(80, self.cover_panel.winfo_width() - 16)
+        available_height = max(
+            60, self.product_image_label.winfo_height() - 16
+        )
         width, height = image.size
         if width <= 0 or height <= 0:
             return
-        scale = available_width / width
+        scale = min(available_width / width, available_height / height)
         target = (
             max(1, round(width * scale)),
             max(1, round(height * scale)),
@@ -1595,13 +1615,60 @@ class ProductGeneratorGUI:
             decoded[color_start:color_start + 300_000]
             if color_start >= 0 else decoded
         )
-        candidates = re.findall(
-            r'["\'](?:hiRes|large|mainUrl)["\']\s*:\s*'
-            r'["\'](https?://m\.media-amazon\.com/images/I/'
-            r'[^"\']+?\.(?:jpg|jpeg|png|webp))',
-            gallery_section,
-            re.IGNORECASE,
+        candidates = []
+        initial_label = re.search(
+            r'["\']initial["\']\s*:', gallery_section, re.IGNORECASE
         )
+        color_to_asin = re.search(
+            r'["\']colorToAsin["\']\s*:', gallery_section, re.IGNORECASE
+        )
+        if initial_label and color_to_asin:
+            array_start = gallery_section.find('[', initial_label.end())
+            array_end = gallery_section.rfind(
+                ']', array_start, color_to_asin.start()
+            )
+            try:
+                gallery_items = json.loads(
+                    gallery_section[array_start:array_end + 1]
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                gallery_items = []
+            for item in gallery_items:
+                if not isinstance(item, dict):
+                    continue
+                best_url = item.get('hiRes') or item.get('large')
+                if not best_url and isinstance(item.get('main'), dict):
+                    best_url = max(
+                        item['main'],
+                        key=lambda url: max(
+                            [int(number) for number in re.findall(
+                                r'(?:SL|SX|SY)(\d+)', url
+                            )] or [0]
+                        ),
+                        default='',
+                    )
+                if best_url:
+                    candidates.append(best_url)
+        # Thumbnail, large und hiRes können unterschiedliche Amazon-IDs haben.
+        # Pro Galerieobjekt zählt deshalb ausschließlich die beste Variante.
+        if not candidates:
+            for image_object in re.findall(
+                r'\{[^{}]{0,8000}\}', gallery_section, re.DOTALL
+            ):
+                best_url = ''
+                for field in ('hiRes', 'large', 'mainUrl'):
+                    match = re.search(
+                        rf'["\']{field}["\']\s*:\s*["\']'
+                        r'(https?://m\.media-amazon\.com/images/I/'
+                        r'[^"\']+?\.(?:jpg|jpeg|png|webp))',
+                        image_object,
+                        re.IGNORECASE,
+                    )
+                    if match:
+                        best_url = match.group(1)
+                        break
+                if best_url:
+                    candidates.append(best_url)
         if not candidates:
             candidates = re.findall(
                 r'(https?://m\.media-amazon\.com/images/I/'
@@ -1612,7 +1679,7 @@ class ProductGeneratorGUI:
 
         seen_image_ids = set()
         normalized_urls = []
-        for url in [*urls, *candidates]:
+        for url in (candidates or urls):
             url = html_lib.unescape(url).replace('\\_', '_')
             url = re.sub(r'\.\*([A-Z]{2}\d+)\*\.', r'._\1_.', url)
             url = re.sub(

@@ -238,7 +238,8 @@ class OnlineProviderTests(unittest.TestCase):
            "large":"https://m.media-amazon.com/images/I/MAIN1._SX600_.jpg"},
           {"hiRes":"https://m.media-amazon.com/images/I/SIDE2._SL1500_.jpg"},
           {"large":"https://m.media-amazon.com/images/I/BACK3._SX600_.jpg"}
-        ]}
+        ]},
+        'colorToAsin': {'initial': '{}'}
         </script>
         '''
         urls = ProductGeneratorGUI.extract_product_image_urls(

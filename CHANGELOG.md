@@ -8,8 +8,15 @@
   strukturierte API-Fehlermeldungen ohne sensible Header an.
 - Amazon-Galeriebilder werden zusätzlich zum Hauptbild in hoher Auflösung
   erkannt, dedupliziert und in der Vorschau durchblätterbar angezeigt.
+- Pro Amazon-Galerieeintrag wird nur `hiRes` beziehungsweise die beste
+  verfügbare Variante übernommen; Thumbnail-/Large-Doppelungen werden entfernt.
 - Das aktuell angezeigte Produktbild kann über einen Speichern-Dialog als
-  Originaldatei heruntergeladen werden.
+  Originaldatei mit fortlaufender Nummer (`_01`, `_02`, …) heruntergeladen
+  werden.
+- Bildskalierung berücksichtigt die verfügbare Höhe; Navigation und
+  Speichern-Button bleiben im Fenstermodus sichtbar.
+- Der Gitleaks-Job besitzt die für Dependabot-PRs erforderliche reine
+  `pull-requests: read`-Berechtigung.
 - Sicheren Keyring-Backend-Check ergänzt; unsichere oder fehlende Backends
   werden für die Secret-Speicherung abgewiesen.
 - Zugangsdaten können im Einstellungsdialog getestet, ersetzt und gelöscht
