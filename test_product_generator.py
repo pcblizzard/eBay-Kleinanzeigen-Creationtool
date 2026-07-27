@@ -33,6 +33,15 @@ class ProductGeneratorTests(unittest.TestCase):
         self.assertIn("Reviewed description", listing)
         self.assertTrue(listing.rstrip().endswith(WARRANTY_CLAUSE))
 
+    def test_custom_legal_clause_replaces_default_at_the_end(self):
+        variant = {"name": "Produkt", "description": "Beschreibung"}
+        custom = "Individuell bearbeiteter Privatverkaufs-Hinweis."
+        listing = self.generator.generate_listing(
+            variant, legal_clause=custom
+        )
+        self.assertTrue(listing.rstrip().endswith(custom))
+        self.assertNotIn(WARRANTY_CLAUSE, listing)
+
     def test_source_url_is_included(self):
         variant = {
             "name": "Testprodukt",

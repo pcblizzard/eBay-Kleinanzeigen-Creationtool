@@ -34,6 +34,9 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 
 ### Hinzugefügt
 
+- Der Privatverkaufs-Hinweis kann in den Einstellungen global bearbeitet und
+  auf den mitgelieferten Standard zurückgesetzt werden. Vor der Übernahme
+  eines abweichenden Wortlauts erscheint eine rechtliche Warnung.
 - Automatische Sicherung und Wiederherstellung geöffneter Tabs und Entwürfe.
 - Trefferkennzeichnung mit Quelle und geschätzter Übereinstimmungsqualität.
 - Zusammenführung identischer Produkttitel mit gemeinsamer Quellenanzeige.

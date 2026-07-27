@@ -8,7 +8,7 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 - ✅ **Produktsuche**: Intelligente Suche mit Live-Ergebnissen
 - ✅ **Variantenauswahl**: Übersichtliche Auswahl bei mehreren Modellen
 - ✅ **Prüfbare Beschreibung**: Produkttext vor dem Speichern bearbeiten
-- ✅ **Privatverkaufs-Hinweis**: Automatisch eingefügt und in der Ausgabe nicht entfernbar
+- ✅ **Privatverkaufs-Hinweis**: Automatisch angehängt, warnend editierbar und auf den Standard zurücksetzbar
 - ✅ **Speicherort wählbar**: Standardmäßig im Projektordner `product_listings`
 - ✅ **Quellennachweis**: Online gefundene Daten enthalten die Produkt-URL
 - ✅ **Textdatei-Export**: Mit Produktnamen als Dateinamen
@@ -129,7 +129,10 @@ ihr Markup oder ihre Zugriffsregeln jederzeit ändern, deshalb muss der gefunden
 Text anhand der mitgespeicherten Quelle geprüft werden.
 
 > **Rechtlicher Hinweis:** Der vorgegebene Text wird technisch unverändert
-> angehängt, ist aber keine Rechtsberatung. Insbesondere behandelt § 475 BGB
+> angehängt, solange er nicht in den Einstellungen bewusst bearbeitet wird.
+> Vor der Übernahme eines geänderten Wortlauts zeigt die Anwendung eine
+> Warnung. Weder Standardtext noch Warnung sind eine Rechtsberatung.
+> Insbesondere behandelt § 475 BGB
 > Verbrauchsgüterkäufe zwischen Unternehmern und Verbrauchern; für
 > Haftungsausschlüsse ist auch § 444 BGB relevant. Den Wortlaut daher vor einer
 > Veröffentlichung fachlich prüfen lassen.

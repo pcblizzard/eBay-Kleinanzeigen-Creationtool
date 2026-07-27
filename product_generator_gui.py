@@ -91,6 +91,15 @@ TRANSLATIONS = {
         "config_load_error": "Fehler beim Laden der Konfiguration",
         "config_save_error": "Fehler beim Speichern der Konfiguration",
         "settings_saved": "Einstellungen gespeichert",
+        "legal_edit_label": "Privatverkaufs-Hinweis:",
+        "legal_reset": "Standardtext wiederherstellen",
+        "legal_warning_title": "Rechtlichen Hinweis geändert",
+        "legal_warning": (
+            "Der Privatverkaufs-Hinweis wurde verändert. Der geänderte "
+            "Wortlaut kann rechtlich unvollständig oder ungeeignet sein. "
+            "Die Anwendung kann keine Rechtssicherheit garantieren.\n\n"
+            "Geänderten Text trotzdem übernehmen?"
+        ),
         "copy_button": "📋 Beitrag kopieren",
         "copied_success": "Beitrag in die Zwischenablage kopiert",
         "export_button": "💾 Beitrag speichern",
@@ -151,6 +160,14 @@ TRANSLATIONS = {
         "config_load_error": "Error loading configuration",
         "config_save_error": "Error saving configuration",
         "settings_saved": "Settings saved",
+        "legal_edit_label": "Private-sale notice:",
+        "legal_reset": "Restore default text",
+        "legal_warning_title": "Legal notice changed",
+        "legal_warning": (
+            "The private-sale notice has been changed. The modified wording "
+            "may be legally incomplete or unsuitable. The application cannot "
+            "guarantee legal validity.\n\nApply the modified text anyway?"
+        ),
         "copy_button": "📋 Copy listing",
         "copied_success": "Listing copied to clipboard",
         "export_button": "💾 Save listing",
@@ -253,7 +270,10 @@ class ProductGenerator:
         
         return results
     
-    def generate_listing(self, product_variant, language="de", description_override=None):
+    def generate_listing(
+        self, product_variant, language="de", description_override=None,
+        legal_clause=WARRANTY_CLAUSE
+    ):
         """Generiert die komplette Produktliste"""
         description = product_variant['description']
         if description_override is not None:
@@ -266,7 +286,7 @@ class ProductGenerator:
         source_line = f"\n\n{source_label}: {source_url}" if source_url else ""
         return (
             f"{description.rstrip()}{source_line}\n\n---\n\n"
-            f"{WARRANTY_CLAUSE}\n"
+            f"{legal_clause.strip()}\n"
         )
 
     @staticmethod
@@ -572,6 +592,9 @@ class ProductGeneratorGUI:
             'providers',
             {'wikipedia': True, 'amazon': True, 'geizhals': True, 'idealo': True},
         )
+        self.legal_clause = str(
+            config.get('legal_clause', WARRANTY_CLAUSE)
+        ).strip() or WARRANTY_CLAUSE
         project_output = str(Path(__file__).resolve().parent / "product_listings")
         self.save_path = config.get('save_path', project_output)
         if not os.path.exists(self.save_path):
@@ -644,6 +667,7 @@ class ProductGeneratorGUI:
                 'language': self.language,
                 'font_size': self.font_size,
                 'save_path': self.save_path,
+                'legal_clause': self.legal_clause,
                 'providers': {
                     name: bool(variable.get())
                     for name, variable in getattr(self, 'provider_vars', {}).items()
@@ -792,7 +816,7 @@ class ProductGeneratorGUI:
             background="#eeeeee"
         )
         self.legal_text.pack(fill=tk.X)
-        self.legal_text.insert("1.0", WARRANTY_CLAUSE)
+        self.legal_text.insert("1.0", self.legal_clause)
         self.legal_text.config(state=tk.DISABLED)
         
         # ===== Frame 4: Aktionen =====
@@ -1110,7 +1134,7 @@ class ProductGeneratorGUI:
         if draft:
             self.rendered_preview.insert(tk.END, "\n──────────\n\n")
         self.rendered_preview.insert(
-            tk.END, WARRANTY_CLAUSE, 'legal'
+            tk.END, self.legal_clause, 'legal'
         )
         self.rendered_preview.config(state=tk.DISABLED)
 
@@ -1338,6 +1362,14 @@ class ProductGeneratorGUI:
             self.save_config()
         except Exception:
             pass
+
+    def set_legal_clause(self, text):
+        self.legal_clause = str(text).strip() or WARRANTY_CLAUSE
+        self.legal_text.config(state=tk.NORMAL)
+        self.legal_text.delete('1.0', tk.END)
+        self.legal_text.insert('1.0', self.legal_clause)
+        self.legal_text.config(state=tk.DISABLED)
+        self.render_live_preview()
 
     def update_ui_language(self):
         trans = TRANSLATIONS[self.language]
@@ -2792,7 +2824,8 @@ class ProductGeneratorGUI:
         # Listing generieren
         edited_description = self.preview_text.get("1.0", tk.END).strip()
         listing = self.generator.generate_listing(
-            self.selected_variant, self.language, edited_description
+            self.selected_variant, self.language, edited_description,
+            self.legal_clause,
         )
         
         # Speichern im separaten Thread um GUI nicht zu blockieren
@@ -2850,7 +2883,8 @@ class ProductGeneratorGUI:
             return
         edited = self.preview_text.get("1.0", tk.END).strip()
         listing = self.generator.generate_listing(
-            self.selected_variant, self.language, edited
+            self.selected_variant, self.language, edited,
+            self.legal_clause,
         )
         self.root.clipboard_clear()
         self.root.clipboard_append(listing)
@@ -2968,9 +3002,13 @@ class TabbedProductGeneratorGUI:
             return
 
         # Der Pflichttext wird in der Live-Vorschau separat dargestellt.
-        marker = text.find(WARRANTY_CLAUSE)
-        if marker >= 0:
-            text = text[:marker]
+        markers = [
+            text.find(clause)
+            for clause in (controller.legal_clause, WARRANTY_CLAUSE)
+            if clause and text.find(clause) >= 0
+        ]
+        if markers:
+            text = text[:min(markers)]
         text = re.sub(r'\s*---\s*$', '', text.rstrip()).rstrip()
 
         controller = self.add_tab()
@@ -3102,12 +3140,33 @@ class TabbedProductGeneratorGUI:
             '<FocusOut>', lambda event: controller.on_font_size_changed()
         )
 
+        legal_frame = ttk.LabelFrame(
+            content, text=trans['legal_edit_label'], padding=8
+        )
+        legal_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 12))
+        legal_editor = tk.Text(
+            legal_frame, height=5, wrap=tk.WORD,
+            font=("Segoe UI", max(9, controller.font_size - 1)),
+        )
+        legal_editor.pack(fill=tk.BOTH, expand=True)
+        legal_editor.insert('1.0', controller.legal_clause)
+        ttk.Button(
+            legal_frame,
+            text=trans['legal_reset'],
+            command=lambda: (
+                legal_editor.delete('1.0', tk.END),
+                legal_editor.insert('1.0', WARRANTY_CLAUSE),
+            ),
+        ).pack(anchor=tk.W, pady=(6, 0))
+
         actions = ttk.Frame(content)
         actions.pack(fill=tk.X)
         ttk.Button(
             actions,
             text=trans['save_button'],
-            command=lambda: self._save_settings(controller, window),
+            command=lambda: self._save_settings(
+                controller, window, legal_editor
+            ),
         ).pack(side=tk.LEFT)
         ttk.Button(
             actions, text=trans['close_button'], command=window.destroy
@@ -3118,14 +3177,29 @@ class TabbedProductGeneratorGUI:
         window.grab_set()
         window.focus_set()
 
-    def _save_settings(self, controller, window):
+    def _save_settings(self, controller, window, legal_editor=None):
         """Speichert nur die Konfiguration, niemals einen Verkaufsbeitrag."""
         controller.on_font_size_changed()
+        legal_clause = (
+            legal_editor.get('1.0', tk.END).strip()
+            if legal_editor is not None else controller.legal_clause
+        ) or WARRANTY_CLAUSE
+        if (
+            legal_clause != WARRANTY_CLAUSE
+            and legal_clause != controller.legal_clause
+            and not messagebox.askyesno(
+                TRANSLATIONS[controller.language]['legal_warning_title'],
+                TRANSLATIONS[controller.language]['legal_warning'],
+                parent=window,
+            )
+        ):
+            return
         controller.save_config()
         settings = {
             'language': controller.language,
             'font_size': controller.font_size,
             'save_path': controller.save_path,
+            'legal_clause': legal_clause,
             'providers': {
                 name: bool(variable.get())
                 for name, variable in controller.provider_vars.items()
@@ -3134,6 +3208,7 @@ class TabbedProductGeneratorGUI:
         for other in self.controllers.values():
             other.save_path = settings['save_path']
             other.path_label.config(text=other.save_path)
+            other.set_legal_clause(settings['legal_clause'])
             for name, enabled in settings['providers'].items():
                 if name in other.provider_vars:
                     other.provider_vars[name].set(enabled)
