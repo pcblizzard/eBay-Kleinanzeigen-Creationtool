@@ -1639,6 +1639,7 @@ class ProductGeneratorGUI:
                 title, description = self.extract_amazon_product(
                     self.fetch_url(source_url)
                 )
+                title = self.repair_truncated_amazon_title(title)
             except Exception:
                 return
             self.root.after(
@@ -2414,6 +2415,7 @@ class ProductGeneratorGUI:
             asin = asin_match.group(1)
             source_url = f"https://www.amazon.de/dp/{asin}"
             title, description = self.extract_amazon_product(self.fetch_url(source_url))
+            title = self.repair_truncated_amazon_title(title)
             return [(title, description, source_url)] if title else []
 
         query = urllib.parse.quote_plus(search_term)
@@ -2477,6 +2479,52 @@ class ProductGeneratorGUI:
             description = f"Amazon-Suchergebnis: {search_title}"
             results.append((search_title, description, source_url))
         return results
+
+    @staticmethod
+    def complete_truncated_title(title, candidate_titles):
+        """Ersetzt nur ein nachweislich vervollständigtes letztes Wort."""
+        words = title.split()
+        if not words:
+            return title
+        fragment = re.sub(r'\W+', '', words[-1]).casefold()
+        if len(fragment) < 4:
+            return title
+        completions = []
+        for candidate in candidate_titles:
+            for word in re.findall(r'[\w-]+', candidate):
+                normalized = word.casefold()
+                if normalized.startswith(fragment) and len(normalized) > len(fragment):
+                    completions.append(word)
+        normalized_completions = {
+            value.casefold(): value for value in completions
+        }
+        if len(normalized_completions) != 1:
+            return title
+        completion = next(iter(normalized_completions.values()))
+        if words[-1][:1].isupper():
+            completion = completion[:1].upper() + completion[1:]
+        return ' '.join(words[:-1] + [completion])
+
+    def repair_truncated_amazon_title(self, title):
+        """Gleicht abgeschnittene Amazon-Titel mit Webvorschlägen ab."""
+        if not title:
+            return title
+        last_word = re.sub(r'\W+', '', title.split()[-1]).casefold()
+        suspicious_fragments = (
+            'receiv', 'verstärk', 'lautsprech', 'smartphon',
+            'kopfhör', 'netzwerkplay',
+        )
+        if not any(
+            last_word == fragment for fragment in suspicious_fragments
+        ):
+            return title
+        try:
+            suggestions = self.search_web_suggestions(title)
+        except Exception:
+            return title
+        return self.complete_truncated_title(
+            title, [candidate[0] for candidate in suggestions]
+        )
 
     @staticmethod
     def is_unwanted_search_result(title, source_url=''):

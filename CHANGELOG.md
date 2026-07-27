@@ -54,6 +54,10 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
   technischen Produktangaben.
 - Blockierte Idealo-/Geizhals-Produktlinks fallen automatisch auf passende
   Treffer aus den übrigen Produktquellen zurück.
+- Nachweislich abgeschnittene Amazon-Titel werden nur bei einer eindeutigen
+  Vervollständigung aus Webvorschlägen repariert.
+- Nachweislich abgeschnittene Amazon-Titel werden nur bei einer eindeutigen
+  Vervollständigung aus Webvorschlägen repariert.
 - Die Live-Vorschau zeigt das Cover in einer eigenen linken Spalte und den
   formatierten Beitrag vollständig im rechten Bereich.
 - Varianten können über das Rechtsklickmenü als unabhängige Kopie in einem

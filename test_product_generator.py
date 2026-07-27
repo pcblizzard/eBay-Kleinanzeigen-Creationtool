@@ -381,6 +381,31 @@ class OnlineProviderTests(unittest.TestCase):
         self.assertEqual(provider_name, "Amazon-Link")
         self.assertEqual(provider.__func__, gui.search_amazon.__func__)
 
+    def test_truncated_amazon_title_uses_unique_suggestion_completion(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        suggestions = [(
+            "marantz m cr612 melody x netzwerk cd receiver",
+            "Vorschlag",
+            "https://suggestqueries.google.com/",
+        )]
+        with patch.object(
+            gui, "search_web_suggestions", return_value=suggestions
+        ):
+            repaired = gui.repair_truncated_amazon_title(
+                "Marantz M-CR612 Melody X Netzwerk Receiv"
+            )
+        self.assertEqual(
+            repaired,
+            "Marantz M-CR612 Melody X Netzwerk Receiver",
+        )
+
+    def test_ambiguous_title_completion_keeps_original(self):
+        title = "Produkt Receiv"
+        repaired = ProductGeneratorGUI.complete_truncated_title(
+            title, ["Produkt Receiver", "Produkt Receiving"]
+        )
+        self.assertEqual(repaired, title)
+
     def test_generic_product_url_extracts_open_graph_data(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
         html = """

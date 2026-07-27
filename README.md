@@ -111,6 +111,8 @@ Seitentitel, Beschreibungen und Datenlisten ausgewertet. Bei Amazon übernimmt
 die Anwendung zusätzlich das hochauflösende `landingImage`, sofern verfügbar.
 Blockiert Idealo oder Geizhals einen direkten Abruf, wird aus dem Link der
 Produktname abgeleitet und automatisch über die übrigen Produktquellen gesucht.
+Offensichtlich abgeschnittene Amazon-Titel werden mit Webvorschlägen
+abgeglichen und nur bei einer eindeutigen Vervollständigung korrigiert.
 
 ISBN-10 und ISBN-13 werden auch mit Bindestrichen erkannt, validiert und
 gegenseitig umgerechnet. Für Bücher fragt das Tool die Deutsche
