@@ -82,6 +82,7 @@ TRANSLATIONS = {
         "default_save_path_notice": "Standardpfad gespeichert",
         "config_load_error": "Fehler beim Laden der Konfiguration",
         "config_save_error": "Fehler beim Speichern der Konfiguration",
+        "settings_saved": "Einstellungen gespeichert",
     },
     "en": {
         "title": "eBay Classifieds - Product Description Generator",
@@ -131,6 +132,7 @@ TRANSLATIONS = {
         "default_save_path_notice": "Default path saved",
         "config_load_error": "Error loading configuration",
         "config_save_error": "Error saving configuration",
+        "settings_saved": "Settings saved",
     }
 }
 
@@ -2416,7 +2418,9 @@ class TabbedProductGeneratorGUI:
         actions = ttk.Frame(content)
         actions.pack(fill=tk.X)
         ttk.Button(
-            actions, text=trans['save_button'], command=controller.save_file
+            actions,
+            text=trans['save_button'],
+            command=lambda: self._save_settings(controller, window),
         ).pack(side=tk.LEFT)
         ttk.Button(
             actions, text=trans['close_button'], command=window.destroy
@@ -2426,6 +2430,16 @@ class TabbedProductGeneratorGUI:
         window.minsize(max(650, window.winfo_reqwidth()), window.winfo_reqheight())
         window.grab_set()
         window.focus_set()
+
+    def _save_settings(self, controller, window):
+        """Speichert nur die Konfiguration, niemals einen Verkaufsbeitrag."""
+        controller.on_font_size_changed()
+        controller.save_config()
+        controller.status_var.set(
+            TRANSLATIONS[controller.language]['settings_saved']
+        )
+        if window.winfo_exists():
+            window.destroy()
 
     def _settings_path_action(self, controller, method_name):
         getattr(controller, method_name)()

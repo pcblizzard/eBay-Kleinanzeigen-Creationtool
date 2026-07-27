@@ -15,6 +15,8 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 
 ### Behoben
 
+- „Speichern“ im Einstellungsdialog speichert nur die Konfiguration und
+  verlangt keine ausgewählte Produktvariante mehr.
 - DNB-Metadaten werden auf Unicode-NFC normalisiert, damit Umlaute in Tk korrekt erscheinen.
 - Quellenbeschriftungen bleiben unter dem Windows-/Vista-Theme sichtbar.
 - Geizhals-Social-Media-, Werbe-, Hilfe- und Navigationslinks werden nicht als Produkte angezeigt.
