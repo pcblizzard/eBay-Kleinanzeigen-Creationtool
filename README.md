@@ -18,6 +18,7 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 - ✅ **ISBN-10/ISBN-13**: Deutsche Buchdaten über die Deutsche Nationalbibliothek
 - ✅ **Geteilte Bearbeitung**: Editor und formatierte Live-Vorschau nebeneinander
 - ✅ **Produktcover**: Bild der ausgewählten Produktseite wird automatisch geladen
+- ✅ **Produktbild-Galerie**: Mehrere Amazon-Bilder durchblättern und einzeln speichern
 - ✅ **Geteilte Vorschau**: Cover links, formatierter Verkaufstext rechts
 - ✅ **Treffer in neuem Tab**: Varianten per Rechtsklick unabhängig öffnen
 - ✅ **Produktlink-Import**: Amazon-, Geizhals-, Idealo- und Herstellerlinks direkt in das Suchfeld einfügen
@@ -145,6 +146,25 @@ Kleinanzeigen Agent dokumentiert keine Funktion zum Veröffentlichen eigener
 Anzeigen. Das Einstellen auf eBay würde zusätzlich einen Benutzer-OAuth-Flow,
 Versand-/Zahlungsrichtlinien und weitere Pflichtangaben benötigen und ist noch
 nicht aktiviert.
+
+Der Kleinanzeigen-Verbindungstest verwendet eine reguläre Ein-Treffer-Abfrage
+mit eindeutigem App-User-Agent. Strukturierte API-Fehler werden ohne Schlüssel
+oder Authorization-Header angezeigt. Der Test verbraucht einen Credit.
+
+### Produktbilder
+
+Amazon-Produktseiten werden neben dem Hauptbild auch nach den Galerieeinträgen
+`hiRes`, `large` und `mainUrl` ausgewertet. Bis zu 20 unterschiedliche Bilder
+werden in der Cover-Spalte angeboten. Pfeiltasten wechseln das aktuelle Bild,
+der Zähler zeigt die Position und **Bild speichern…** lädt auf ausdrücklichen
+Wunsch die angezeigte Originaldatei in einen gewählten Ordner. Amazon-
+Thumbnail- und Auflösungsvarianten desselben Galerieeintrags zählen dabei nicht
+als zusätzliche Bilder. Gespeicherte Dateien erhalten fortlaufende Endungen wie
+`_01.jpg`, `_02.jpg` und so weiter. Die Darstellung skaliert nach verfügbarer
+Breite und Höhe, damit die Galeriebuttons auch in kleineren Fenstern sichtbar
+bleiben. Bilder werden
+nicht automatisch dauerhaft gespeichert. Nutzungs- und Veröffentlichungsrechte
+an Bildern müssen unabhängig davon beachtet werden.
 
 ## Sicherheit
 
