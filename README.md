@@ -4,27 +4,26 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 
 ## Features
 
-✅ **GUI-Interface**: Benutzerfreundliche graphische Oberfläche  
-✅ **Produktsuche**: Intelligente Suche mit Live-Ergebnissen  
-✅ **Variantenauswahl**: Übersichtliche Auswahl bei mehreren Modellen  
-✅ **Prüfbare Beschreibung**: Produkttext vor dem Speichern bearbeiten  
-✅ **Privatverkaufs-Hinweis**: Automatisch eingefügt & in der Ausgabe nicht entfernbar  
-✅ **Speicherort wählbar**: Standardmäßig im Projektordner `product_listings`  
-✅ **Quellennachweis**: Online gefundene Daten enthalten die Produkt-URL  
-✅ **Textdatei-Export**: Mit Produktnamen als Dateinamen  
-✅ **Zeitstempel**: Automatisch hinzugefügt  
-✅ **Mehrere Beiträge**: Unabhängige Suchen und Entwürfe in separaten Tabs  
-✅ **EAN/GTIN-Suche**: Barcodes werden direkt an die Produktsuchen übergeben  
-✅ **ISBN-10/ISBN-13**: Deutsche Buchdaten über die Deutsche Nationalbibliothek  
-✅ **Geteilte Bearbeitung**: Editor und formatierte Live-Vorschau nebeneinander  
-✅ **Produktcover**: Bild der ausgewählten Produktseite wird automatisch geladen  
-✅ **Geteilte Vorschau**: Cover links, formatierter Verkaufstext rechts
-✅ **Treffer in neuem Tab**: Varianten per Rechtsklick unabhängig öffnen
-✅ **Produktlink-Import**: Amazon-, Geizhals-, Idealo- und Herstellerlinks
-direkt in das Suchfeld einfügen
-✅ **Quellen & Qualität**: Treffer zeigen Herkunft und geschätzte Übereinstimmung
-✅ **Sitzungswiederherstellung**: Offene Tabs und Entwürfe werden automatisch gesichert
-✅ **Buchkataloge**: ISBN-Metadaten zusätzlich über Open Library und Google Books
+- ✅ **GUI-Interface**: Benutzerfreundliche graphische Oberfläche
+- ✅ **Produktsuche**: Intelligente Suche mit Live-Ergebnissen
+- ✅ **Variantenauswahl**: Übersichtliche Auswahl bei mehreren Modellen
+- ✅ **Prüfbare Beschreibung**: Produkttext vor dem Speichern bearbeiten
+- ✅ **Privatverkaufs-Hinweis**: Automatisch eingefügt und in der Ausgabe nicht entfernbar
+- ✅ **Speicherort wählbar**: Standardmäßig im Projektordner `product_listings`
+- ✅ **Quellennachweis**: Online gefundene Daten enthalten die Produkt-URL
+- ✅ **Textdatei-Export**: Mit Produktnamen als Dateinamen
+- ✅ **Zeitstempel**: Automatisch hinzugefügt
+- ✅ **Mehrere Beiträge**: Unabhängige Suchen und Entwürfe in separaten Tabs
+- ✅ **EAN/GTIN-Suche**: Barcodes werden direkt an die Produktsuchen übergeben
+- ✅ **ISBN-10/ISBN-13**: Deutsche Buchdaten über die Deutsche Nationalbibliothek
+- ✅ **Geteilte Bearbeitung**: Editor und formatierte Live-Vorschau nebeneinander
+- ✅ **Produktcover**: Bild der ausgewählten Produktseite wird automatisch geladen
+- ✅ **Geteilte Vorschau**: Cover links, formatierter Verkaufstext rechts
+- ✅ **Treffer in neuem Tab**: Varianten per Rechtsklick unabhängig öffnen
+- ✅ **Produktlink-Import**: Amazon-, Geizhals-, Idealo- und Herstellerlinks direkt in das Suchfeld einfügen
+- ✅ **Quellen & Qualität**: Treffer zeigen Herkunft und geschätzte Übereinstimmung
+- ✅ **Sitzungswiederherstellung**: Offene Tabs und Entwürfe werden automatisch gesichert
+- ✅ **Buchkataloge**: ISBN-Metadaten zusätzlich über Open Library und Google Books
 
 ## Installation
 
