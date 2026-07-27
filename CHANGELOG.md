@@ -2,6 +2,14 @@
 
 Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumentiert.
 
+## [Unveröffentlicht]
+
+### Behoben
+
+- DNB-Metadaten werden auf Unicode-NFC normalisiert, damit Umlaute in Tk korrekt erscheinen.
+- Quellenbeschriftungen bleiben unter dem Windows-/Vista-Theme sichtbar.
+- Geizhals-Social-Media-, Werbe-, Hilfe- und Navigationslinks werden nicht als Produkte angezeigt.
+
 ## [0.2.0] - 2026-07-27
 
 ### Hinzugefügt

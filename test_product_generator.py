@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import unicodedata
 from unittest.mock import Mock, patch
 from pathlib import Path
 
@@ -168,6 +169,13 @@ class OnlineProviderTests(unittest.TestCase):
         self.assertIn("ISBN-13: 9783442180653", results[0][1])
         self.assertEqual(
             results[0][2], "https://www.penguin.de/ean/9783442180653"
+        )
+        self.assertTrue(unicodedata.is_normalized("NFC", results[0][0]))
+
+    def test_decomposed_dnb_umlauts_are_normalized(self):
+        self.assertEqual(
+            ProductGeneratorGUI.clean_marc_text("Mu\u0308nchen vera\u0308ndern"),
+            "München verändern",
         )
 
     def test_model_spellings_are_searched_in_both_forms(self):
@@ -363,6 +371,19 @@ class OnlineProviderTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "Cloudflare"):
                 gui.search_search_page("https://example.test", "https://example.test")
+
+    def test_geizhals_navigation_links_are_not_products(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        html = """
+        <h2><a href="/instagram">Geizhals auf Instagram</a></h2>
+        <h2><a href="/help">Bitte beachte die Hinweise zum Versand</a></h2>
+        <h2><a href="/book">Die LET THEM Theorie</a></h2>
+        """
+        with patch.object(gui, "fetch_url", return_value=html):
+            results = gui.search_search_page(
+                "https://geizhals.de/?fs=isbn", "https://geizhals.de"
+            )
+        self.assertEqual([item[0] for item in results], ["Die LET THEM Theorie"])
 
 
 if __name__ == "__main__":

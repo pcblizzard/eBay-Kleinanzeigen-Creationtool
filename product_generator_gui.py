@@ -19,6 +19,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 import threading
+import unicodedata
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -243,7 +244,10 @@ class ProductGenerator:
     @staticmethod
     def build_sales_draft(product_name, raw_description, language="de"):
         """Formt gefundene Fakten zu einem prüfbaren Verkaufsbeitrag."""
-        raw_description = str(raw_description or '').strip()
+        product_name = unicodedata.normalize('NFC', str(product_name))
+        raw_description = unicodedata.normalize(
+            'NFC', str(raw_description or '')
+        ).strip()
         raw_lines = []
         for line in raw_description.splitlines():
             clean = re.sub(r'^\s*[•*\-]\s*', '', line).strip()
@@ -720,6 +724,7 @@ class ProductGeneratorGUI:
         )
         self.provider_frame.pack(fill=tk.X, pady=(0, 10))
         self.provider_vars = {}
+        self.provider_buttons = {}
         for name, label_key in (
             ('web_suggestions', 'provider_web_suggestions'),
             ('wikipedia', 'provider_wikipedia'),
@@ -732,12 +737,23 @@ class ProductGeneratorGUI:
             )
             self.provider_vars[name] = variable
             label = trans[label_key]
-            ttk.Checkbutton(
+            button = tk.Checkbutton(
                 self.provider_frame,
                 text=label,
                 variable=variable,
                 command=self.save_config,
-            ).pack(side=tk.LEFT, padx=(0, 14))
+                font=("Segoe UI", max(9, self.font_size)),
+                foreground="#202124",
+                background="#f5f5f5",
+                activeforeground="#202124",
+                activebackground="#f5f5f5",
+                selectcolor="#ffffff",
+                anchor=tk.W,
+                borderwidth=0,
+                highlightthickness=0,
+            )
+            button.pack(side=tk.LEFT, padx=(0, 14))
+            self.provider_buttons[name] = (button, label_key)
         
         font_frame = ttk.Frame(self.options_frame)
         font_frame.pack(fill=tk.X, pady=(0, 10))
@@ -1076,6 +1092,8 @@ class ProductGeneratorGUI:
                 font=("Segoe UI", max(10, self.font_size))
             )
             self.legal_text.config(font=("Segoe UI", max(9, self.font_size - 1)))
+            for button, _ in self.provider_buttons.values():
+                button.config(font=("Segoe UI", max(9, self.font_size)))
             self.save_config()
         except Exception:
             pass
@@ -1092,6 +1110,8 @@ class ProductGeneratorGUI:
         self.rendered_frame.config(text=trans['live_preview_label'])
         self.legal_frame.config(text=trans['legal_frame'])
         self.provider_frame.config(text=trans['provider_frame'])
+        for button, label_key in self.provider_buttons.values():
+            button.config(text=trans[label_key])
         self.options_frame.config(text=trans['options_frame'])
         self.language_label_widget.config(text=trans['language_label'])
         self.font_size_label_widget.config(text=trans['font_size_label'])
@@ -1681,6 +1701,7 @@ class ProductGeneratorGUI:
     @staticmethod
     def clean_marc_text(value):
         value = re.sub(r'[\x80-\x9f]', '', value)
+        value = unicodedata.normalize('NFC', value)
         return re.sub(r'\s+', ' ', value).strip(' /:;,')
 
     def search_web_suggestions(self, search_term):
@@ -1902,6 +1923,7 @@ class ProductGeneratorGUI:
     def clean_html_text(value):
         value = re.sub(r'<[^>]+>', ' ', value)
         value = html_lib.unescape(value)
+        value = unicodedata.normalize('NFC', value)
         return re.sub(r'\s+', ' ', value).strip()
 
     def extract_amazon_product(self, html):
@@ -2016,7 +2038,8 @@ class ProductGeneratorGUI:
                     continue
                 if re.search(
                     r'(Geizhals-App|Gesponserte Anzeige|AppStore|Google Play|'
-                    r'AppGallery|^Geizhals$)',
+                    r'AppGallery|^Geizhals$|^Geizhals auf |'
+                    r'Bitte beachte die Hinweise|Ende der Seite)',
                     title_clean,
                     re.IGNORECASE,
                 ):
