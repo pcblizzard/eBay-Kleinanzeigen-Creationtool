@@ -185,7 +185,9 @@ Die Anwendung akzeptiert für Zugangsdaten ausschließlich ein geeignetes
 Betriebssystem-Keyring. Unter Windows muss der Windows Credential Locker aktiv
 sein; Null-, Fail- oder unverschlüsselte Backends werden abgewiesen. Im
 Einstellungsdialog können Zugangsdaten ersetzt, getestet und vollständig aus dem
-Keyring gelöscht werden. Der Kleinanzeigen-Verbindungstest führt eine minimale
+Keyring gelöscht werden. Bereits gespeicherte Werte erscheinen ausschließlich
+als Maskierungsplatzhalter; der echte Inhalt wird nie in das Eingabefeld
+zurückgelesen. Der Kleinanzeigen-Verbindungstest führt eine minimale
 Live-Suche aus und verbraucht dabei einen Credit.
 
 Für eBay kann getrennt zwischen `sandbox` und `production` gewählt werden.

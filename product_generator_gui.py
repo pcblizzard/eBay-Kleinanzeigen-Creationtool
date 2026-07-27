@@ -39,6 +39,7 @@ except ImportError:
 WARRANTY_CLAUSE = """Privatverkauf. Die Ware wird unter Ausschluss der Sachmängelhaftung nach § 475 BGB verkauft. Ausgeschlossen ist jede Gewährleistung für Sachmängel. Die Haftung für arglistig verschwiegene Mängel sowie für Schäden aus der Verletzung von Leben, Körper oder Gesundheit bleibt unberührt."""
 
 SECRET_SERVICE = "eBay-Kleinanzeigen-Creationtool"
+SECRET_PLACEHOLDER = "****************"
 MAX_TEXT_RESPONSE_BYTES = 5 * 1024 * 1024
 MAX_IMAGE_RESPONSE_BYTES = 15 * 1024 * 1024
 
@@ -848,6 +849,14 @@ class ProductGeneratorGUI:
             return
         keyring = ProductGeneratorGUI.secure_keyring()
         keyring.set_password(SECRET_SERVICE, name, value)
+
+    @staticmethod
+    def entered_secret(value):
+        """Gibt nur tatsächlich neu eingegebene Zugangsdaten zurück."""
+        normalized = str(value or '').strip()
+        if not normalized or normalized == SECRET_PLACEHOLDER:
+            return ''
+        return normalized
 
     @staticmethod
     def delete_secret(name):
@@ -4454,9 +4463,27 @@ class TabbedProductGeneratorGUI:
             entry = ttk.Entry(marketplace_frame, show='•', width=54)
             entry.grid(row=row, column=1, sticky=tk.EW, pady=3)
             secret_entries[secret_name] = entry
+            stored = bool(controller.get_secret(secret_name))
+            entry._has_stored_secret = stored
+            if stored:
+                entry.insert(0, SECRET_PLACEHOLDER)
+
+            def clear_placeholder(event, widget=entry):
+                if widget.get() == SECRET_PLACEHOLDER:
+                    widget.delete(0, tk.END)
+
+            def restore_placeholder(event, widget=entry):
+                if (
+                    not widget.get().strip()
+                    and getattr(widget, '_has_stored_secret', False)
+                ):
+                    widget.insert(0, SECRET_PLACEHOLDER)
+
+            entry.bind('<FocusIn>', clear_placeholder)
+            entry.bind('<FocusOut>', restore_placeholder)
             status = (
                 trans['secret_saved_status']
-                if controller.get_secret(secret_name)
+                if stored
                 else trans['secret_missing_status']
             )
             ttk.Label(
@@ -4604,7 +4631,9 @@ class TabbedProductGeneratorGUI:
             )
             for name in relevant_names:
                 entry = (secret_entries or {}).get(name)
-                value = entry.get().strip() if entry is not None else ''
+                value = controller.entered_secret(
+                    entry.get() if entry is not None else ''
+                )
                 if value:
                     controller.set_secret(name, value)
             if provider == 'ebay':
@@ -4687,7 +4716,7 @@ class TabbedProductGeneratorGUI:
             return
         try:
             for name, entry in (secret_entries or {}).items():
-                value = entry.get().strip()
+                value = controller.entered_secret(entry.get())
                 if value:
                     controller.set_secret(name, value)
                     controller.audit_security_event(

@@ -2,6 +2,10 @@
 
 ## Unveröffentlicht
 
+- Bereits sicher gespeicherte Marktplatz-Zugangsdaten werden in den Eingabefeldern
+  durch einen festen Maskierungsplatzhalter sichtbar gemacht. Der Platzhalter
+  kann weder gespeichert noch für einen Verbindungstest als Schlüssel verwendet
+  werden.
 - eBay-Kategorievorschläge über die aktuelle Commerce Taxonomy API ergänzt.
 - Kategoriepfade sowie Pflicht-, empfohlene und optionale Artikelmerkmale werden
   pro Beitrag in einem unabhängigen Prüfbereich dargestellt.

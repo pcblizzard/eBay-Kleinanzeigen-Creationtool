@@ -8,6 +8,7 @@ from pathlib import Path
 from product_generator_gui import (
     ProductGenerator,
     ProductGeneratorGUI,
+    SECRET_PLACEHOLDER,
     WARRANTY_CLAUSE,
 )
 
@@ -134,6 +135,16 @@ class ProductGeneratorTests(unittest.TestCase):
 
 
 class OnlineProviderTests(unittest.TestCase):
+    def test_stored_secret_placeholder_is_never_saved_as_a_secret(self):
+        self.assertEqual(
+            ProductGeneratorGUI.entered_secret(SECRET_PLACEHOLDER), ""
+        )
+        self.assertEqual(ProductGeneratorGUI.entered_secret(""), "")
+        self.assertEqual(
+            ProductGeneratorGUI.entered_secret("  new-secret  "),
+            "new-secret",
+        )
+
     def test_private_and_local_product_urls_are_blocked(self):
         for url in (
             "http://localhost/admin",
