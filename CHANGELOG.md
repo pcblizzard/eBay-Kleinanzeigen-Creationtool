@@ -1,5 +1,16 @@
 # Changelog
 
+## Unveröffentlicht
+
+- Kleinanzeigen Agent als optionale Live-Quelle für öffentliche Inserate,
+  Kategorien und strukturierte Merkmale ergänzt.
+- eBay.de über die offizielle Browse API mit Stichwort- und GTIN-Suche ergänzt.
+- API-Schlüssel und eBay-Anwendungsdaten werden ausschließlich im sicheren
+  Betriebssystem-Schlüsselspeicher verwaltet; Konfigurations- und Sitzungsdateien
+  enthalten keine Zugangsdaten.
+- Marktplatz-Zugangsdaten können maskiert im Einstellungsdialog hinterlegt werden.
+- Automatisierte Provider-Tests für beide neuen Quellen ergänzt.
+
 Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumentiert.
 
 ## [Unveröffentlicht]

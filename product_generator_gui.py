@@ -9,6 +9,7 @@ import json
 import io
 import locale
 import os
+import base64
 from pathlib import Path
 from datetime import datetime
 import difflib
@@ -24,6 +25,7 @@ import time
 import unicodedata
 import urllib.parse
 import urllib.request
+import urllib.error
 import xml.etree.ElementTree as ET
 
 try:
@@ -34,6 +36,8 @@ except ImportError:
 
 # Konstante für die Gewährleistungsklausel
 WARRANTY_CLAUSE = """Privatverkauf. Die Ware wird unter Ausschluss der Sachmängelhaftung nach § 475 BGB verkauft. Ausgeschlossen ist jede Gewährleistung für Sachmängel. Die Haftung für arglistig verschwiegene Mängel sowie für Schäden aus der Verletzung von Leben, Körper oder Gesundheit bleibt unberührt."""
+
+SECRET_SERVICE = "eBay-Kleinanzeigen-Creationtool"
 
 TRANSLATIONS = {
     "de": {
@@ -87,6 +91,14 @@ TRANSLATIONS = {
         "provider_amazon": "Amazon.de",
         "provider_geizhals": "Geizhals",
         "provider_idealo": "Idealo",
+        "provider_ebay": "eBay.de (offizielle API)",
+        "provider_kleinanzeigen_agent": "Kleinanzeigen Agent",
+        "marketplace_api_frame": "Marktplatz-APIs",
+        "kleinanzeigen_api_key": "Kleinanzeigen-Agent API-Key:",
+        "ebay_client_id": "eBay Client-ID (App-ID):",
+        "ebay_client_secret": "eBay Client-Secret (Cert-ID):",
+        "secret_hint": "Leer lassen, um bereits gespeicherte Zugangsdaten beizubehalten.",
+        "secret_store_error": "Der sichere Betriebssystem-Schlüsselspeicher ist nicht verfügbar.",
         "default_save_path_notice": "Standardpfad gespeichert",
         "config_load_error": "Fehler beim Laden der Konfiguration",
         "config_save_error": "Fehler beim Speichern der Konfiguration",
@@ -156,6 +168,14 @@ TRANSLATIONS = {
         "provider_amazon": "Amazon.de",
         "provider_geizhals": "Geizhals",
         "provider_idealo": "Idealo",
+        "provider_ebay": "eBay.de (official API)",
+        "provider_kleinanzeigen_agent": "Kleinanzeigen Agent",
+        "marketplace_api_frame": "Marketplace APIs",
+        "kleinanzeigen_api_key": "Kleinanzeigen Agent API key:",
+        "ebay_client_id": "eBay client ID (App ID):",
+        "ebay_client_secret": "eBay client secret (Cert ID):",
+        "secret_hint": "Leave blank to keep credentials that are already stored.",
+        "secret_store_error": "The secure operating-system credential store is unavailable.",
         "default_save_path_notice": "Default path saved",
         "config_load_error": "Error loading configuration",
         "config_save_error": "Error saving configuration",
@@ -590,8 +610,14 @@ class ProductGeneratorGUI:
         self.font_size = config.get('font_size', 10)
         self.provider_settings = config.get(
             'providers',
-            {'wikipedia': True, 'amazon': True, 'geizhals': True, 'idealo': True},
+            {
+                'wikipedia': True, 'amazon': True, 'geizhals': True,
+                'idealo': True, 'ebay': False,
+                'kleinanzeigen_agent': False,
+            },
         )
+        self._ebay_access_token = None
+        self._ebay_access_token_expires = 0
         self.legal_clause = str(
             config.get('legal_clause', WARRANTY_CLAUSE)
         ).strip() or WARRANTY_CLAUSE
@@ -677,6 +703,31 @@ class ProductGeneratorGUI:
                 json.dump(config, f, indent=2, ensure_ascii=False)
         except Exception:
             print(TRANSLATIONS['de']['config_save_error'])
+
+    @staticmethod
+    def get_secret(name):
+        """Liest Zugangsdaten ausschließlich aus dem Betriebssystem-Keyring."""
+        environment_names = {
+            'kleinanzeigen_api_key': 'KLAZ_API_KEY',
+            'ebay_client_id': 'EBAY_CLIENT_ID',
+            'ebay_client_secret': 'EBAY_CLIENT_SECRET',
+        }
+        environment_value = os.environ.get(environment_names.get(name, ''), '')
+        if environment_value:
+            return environment_value
+        try:
+            import keyring
+            return keyring.get_password(SECRET_SERVICE, name) or ''
+        except Exception:
+            return ''
+
+    @staticmethod
+    def set_secret(name, value):
+        """Speichert ein Secret verschlüsselt über den System-Keyring."""
+        if not value:
+            return
+        import keyring
+        keyring.set_password(SECRET_SERVICE, name, value)
     
     def setup_ui(self):
         """Erstellt die Benutzeroberfläche"""
@@ -868,9 +919,13 @@ class ProductGeneratorGUI:
             ('amazon', 'provider_amazon'),
             ('geizhals', 'provider_geizhals'),
             ('idealo', 'provider_idealo'),
+            ('ebay', 'provider_ebay'),
+            ('kleinanzeigen_agent', 'provider_kleinanzeigen_agent'),
         ):
             variable = tk.BooleanVar(
-                value=self.provider_settings.get(name, True)
+                value=self.provider_settings.get(
+                    name, name not in ('ebay', 'kleinanzeigen_agent')
+                )
             )
             self.provider_vars[name] = variable
             label = trans[label_key]
@@ -1468,6 +1523,12 @@ class ProductGeneratorGUI:
             providers.append(('Geizhals', self.search_geizhals))
         if not direct_provider and enabled.get('idealo'):
             providers.append(('Idealo', self.search_idealo))
+        if not direct_provider and enabled.get('ebay'):
+            providers.append(('eBay', self.search_ebay))
+        if not direct_provider and enabled.get('kleinanzeigen_agent'):
+            providers.append(
+                ('Kleinanzeigen Agent', self.search_kleinanzeigen_agent)
+            )
         if providers:
             with ThreadPoolExecutor(max_workers=len(providers)) as executor:
                 pending = {
@@ -1876,6 +1937,10 @@ class ProductGeneratorGUI:
             return 'Geizhals'
         if 'idealo.' in host:
             return 'Idealo'
+        if 'ebay.' in host:
+            return 'eBay'
+        if 'kleinanzeigen.' in host:
+            return 'Kleinanzeigen'
         if 'wikipedia.' in host:
             return 'Wikipedia'
         if 'd-nb.info' in host:
@@ -1998,6 +2063,12 @@ class ProductGeneratorGUI:
                 merged.append((title, description, source_url))
         return merged
 
+    @staticmethod
+    def normalize_text(value):
+        return unicodedata.normalize(
+            'NFC', html_lib.unescape(str(value or ''))
+        ).strip()
+
     def search_spelling_variants(self, provider, search_term):
         result_groups = []
         last_error = None
@@ -2010,6 +2081,155 @@ class ProductGeneratorGUI:
         if not merged and last_error:
             raise last_error
         return merged
+
+    def search_kleinanzeigen_agent(self, search_term):
+        """Sucht öffentliche Inserate über die Kleinanzeigen-Agent REST-API."""
+        api_key = self.get_secret('kleinanzeigen_api_key')
+        if not api_key:
+            raise RuntimeError(
+                "API-Key fehlt (unter Einstellungen → Marktplatz-APIs eintragen)"
+            )
+        endpoint = (
+            "https://api.kleinanzeigen-agent.de/api/v2/kleinanzeigen/search?"
+            + urllib.parse.urlencode({
+                'q': search_term, 'page': 0, 'size': 25,
+                'picture_required': 'true',
+            })
+        )
+        request = urllib.request.Request(
+            endpoint,
+            headers={'Accept': 'application/json', 'klaz_key': api_key},
+        )
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode('utf-8'))
+        results = []
+        for ad in payload.get('data', {}).get('ads', []):
+            title = self.normalize_text(ad.get('title', ''))
+            if not title:
+                continue
+            facts = []
+            category = ad.get('category') or {}
+            if category.get('name'):
+                facts.append(f"Kategorie: {category['name']}")
+            details = ad.get('details') or {}
+            if isinstance(details, dict):
+                for label, value in list(details.items())[:15]:
+                    if value not in (None, '', [], {}):
+                        facts.append(f"{label}: {value}")
+            for attribute in (ad.get('attributes') or [])[:15]:
+                if not isinstance(attribute, dict):
+                    continue
+                label = (
+                    attribute.get('label') or attribute.get('name')
+                    or attribute.get('key')
+                )
+                value = (
+                    attribute.get('value_label') or attribute.get('value')
+                    or attribute.get('values')
+                )
+                if label and value not in (None, '', [], {}):
+                    if isinstance(value, list):
+                        value = ", ".join(map(str, value))
+                    facts.append(f"{label}: {value}")
+            location = ad.get('location') or {}
+            if location.get('city') or location.get('name'):
+                facts.append(
+                    "Standort des Vergleichsangebots: "
+                    f"{location.get('city') or location.get('name')}"
+                )
+            results.append((
+                title,
+                '\n'.join(facts) or "Öffentliches Kleinanzeigen-Vergleichsangebot",
+                ad.get('ad_url') or (
+                    f"https://www.kleinanzeigen.de/s-anzeige/{ad.get('ad_id', '')}"
+                ),
+            ))
+        return results
+
+    def get_ebay_access_token(self):
+        """Erzeugt und puffert ein eBay Application-Token."""
+        if (
+            self._ebay_access_token
+            and time.monotonic() < self._ebay_access_token_expires
+        ):
+            return self._ebay_access_token
+        client_id = self.get_secret('ebay_client_id')
+        client_secret = self.get_secret('ebay_client_secret')
+        if not client_id or not client_secret:
+            raise RuntimeError(
+                "Client-ID/Secret fehlen (unter Einstellungen → "
+                "Marktplatz-APIs eintragen)"
+            )
+        credentials = base64.b64encode(
+            f"{client_id}:{client_secret}".encode('utf-8')
+        ).decode('ascii')
+        request = urllib.request.Request(
+            "https://api.ebay.com/identity/v1/oauth2/token",
+            data=urllib.parse.urlencode({
+                'grant_type': 'client_credentials',
+                'scope': 'https://api.ebay.com/oauth/api_scope',
+            }).encode('ascii'),
+            headers={
+                'Authorization': f"Basic {credentials}",
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json',
+            },
+            method='POST',
+        )
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode('utf-8'))
+        self._ebay_access_token = payload['access_token']
+        self._ebay_access_token_expires = (
+            time.monotonic() + max(60, int(payload.get('expires_in', 7200)) - 60)
+        )
+        return self._ebay_access_token
+
+    def search_ebay(self, search_term):
+        """Sucht eBay.de über die offizielle Browse API."""
+        token = self.get_ebay_access_token()
+        normalized_identifier = re.sub(r'\D', '', search_term)
+        parameters = {'limit': 25, 'fieldgroups': 'EXTENDED'}
+        if len(normalized_identifier) in (8, 12, 13, 14):
+            parameters['gtin'] = normalized_identifier
+        else:
+            parameters['q'] = search_term
+        endpoint = (
+            "https://api.ebay.com/buy/browse/v1/item_summary/search?"
+            + urllib.parse.urlencode(parameters)
+        )
+        request = urllib.request.Request(
+            endpoint,
+            headers={
+                'Authorization': f"Bearer {token}",
+                'Accept': 'application/json',
+                'X-EBAY-C-MARKETPLACE-ID': 'EBAY_DE',
+                'Accept-Language': 'de-DE',
+            },
+        )
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode('utf-8'))
+        results = []
+        for item in payload.get('itemSummaries', []):
+            title = self.normalize_text(item.get('title', ''))
+            if not title:
+                continue
+            facts = []
+            if item.get('condition'):
+                facts.append(f"Zustand des Vergleichsangebots: {item['condition']}")
+            categories = item.get('categories') or []
+            if categories and categories[0].get('categoryName'):
+                facts.append(f"Kategorie: {categories[0]['categoryName']}")
+            short_description = self.normalize_text(
+                item.get('shortDescription', '')
+            )
+            if short_description:
+                facts.append(short_description)
+            results.append((
+                title,
+                '\n'.join(facts) or "Öffentliches eBay-Vergleichsangebot",
+                item.get('itemWebUrl') or item.get('itemAffiliateWebUrl', ''),
+            ))
+        return results
 
     def search_geizhals(self, search_term):
         return self.search_spelling_variants(
@@ -3109,7 +3329,9 @@ class TabbedProductGeneratorGUI:
             content, text=trans['provider_frame'], padding=8
         )
         providers.pack(fill=tk.X, pady=(0, 12))
-        for name, (_, label_key) in controller.provider_buttons.items():
+        for index, (name, (_, label_key)) in enumerate(
+            controller.provider_buttons.items()
+        ):
             tk.Checkbutton(
                 providers,
                 text=trans[label_key],
@@ -3118,7 +3340,33 @@ class TabbedProductGeneratorGUI:
                 anchor=tk.W,
                 borderwidth=0,
                 highlightthickness=0,
-            ).pack(side=tk.LEFT, padx=(0, 14))
+            ).grid(
+                row=index // 3, column=index % 3,
+                sticky=tk.W, padx=(0, 18), pady=2,
+            )
+
+        marketplace_frame = ttk.LabelFrame(
+            content, text=trans['marketplace_api_frame'], padding=8
+        )
+        marketplace_frame.pack(fill=tk.X, pady=(0, 12))
+        secret_entries = {}
+        for row, (secret_name, label_key) in enumerate((
+            ('kleinanzeigen_api_key', 'kleinanzeigen_api_key'),
+            ('ebay_client_id', 'ebay_client_id'),
+            ('ebay_client_secret', 'ebay_client_secret'),
+        )):
+            ttk.Label(
+                marketplace_frame, text=trans[label_key]
+            ).grid(row=row, column=0, sticky=tk.W, padx=(0, 8), pady=3)
+            entry = ttk.Entry(marketplace_frame, show='•', width=54)
+            entry.grid(row=row, column=1, sticky=tk.EW, pady=3)
+            secret_entries[secret_name] = entry
+        marketplace_frame.columnconfigure(1, weight=1)
+        ttk.Label(
+            marketplace_frame,
+            text=trans['secret_hint'],
+            foreground='#555555',
+        ).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
 
         font_row = ttk.Frame(content)
         font_row.pack(fill=tk.X, pady=(0, 12))
@@ -3165,7 +3413,7 @@ class TabbedProductGeneratorGUI:
             actions,
             text=trans['save_button'],
             command=lambda: self._save_settings(
-                controller, window, legal_editor
+                controller, window, legal_editor, secret_entries
             ),
         ).pack(side=tk.LEFT)
         ttk.Button(
@@ -3177,7 +3425,9 @@ class TabbedProductGeneratorGUI:
         window.grab_set()
         window.focus_set()
 
-    def _save_settings(self, controller, window, legal_editor=None):
+    def _save_settings(
+        self, controller, window, legal_editor=None, secret_entries=None
+    ):
         """Speichert nur die Konfiguration, niemals einen Verkaufsbeitrag."""
         controller.on_font_size_changed()
         legal_clause = (
@@ -3194,6 +3444,20 @@ class TabbedProductGeneratorGUI:
             )
         ):
             return
+        try:
+            for name, entry in (secret_entries or {}).items():
+                value = entry.get().strip()
+                if value:
+                    controller.set_secret(name, value)
+        except Exception as exc:
+            messagebox.showerror(
+                TRANSLATIONS[controller.language]['marketplace_api_frame'],
+                f"{TRANSLATIONS[controller.language]['secret_store_error']}\n\n{exc}",
+                parent=window,
+            )
+            return
+        controller._ebay_access_token = None
+        controller._ebay_access_token_expires = 0
         controller.save_config()
         settings = {
             'language': controller.language,

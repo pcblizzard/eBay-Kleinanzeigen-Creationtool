@@ -134,6 +134,61 @@ class ProductGeneratorTests(unittest.TestCase):
 
 
 class OnlineProviderTests(unittest.TestCase):
+    def test_kleinanzeigen_agent_maps_public_ad_metadata(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        payload = {
+            "data": {"ads": [{
+                "ad_id": "123",
+                "title": "Samsung Galaxy S23",
+                "ad_url": "https://www.kleinanzeigen.de/s-anzeige/123",
+                "category": {"name": "Handys"},
+                "attributes": [{"label": "Farbe", "value": "Schwarz"}],
+                "location": {"city": "Berlin"},
+            }]}
+        }
+        response = Mock()
+        response.read.return_value = json.dumps(payload).encode("utf-8")
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        with (
+            patch.object(gui, "get_secret", return_value="secret"),
+            patch("urllib.request.urlopen", return_value=response),
+        ):
+            results = gui.search_kleinanzeigen_agent("Galaxy S23")
+        self.assertEqual(results[0][0], "Samsung Galaxy S23")
+        self.assertIn("Kategorie: Handys", results[0][1])
+        self.assertIn("Farbe: Schwarz", results[0][1])
+        self.assertEqual(
+            results[0][2], "https://www.kleinanzeigen.de/s-anzeige/123"
+        )
+
+    def test_ebay_search_uses_gtin_and_german_marketplace(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        payload = {
+            "itemSummaries": [{
+                "title": "Testprodukt",
+                "condition": "Neu",
+                "categories": [{"categoryName": "Elektronik"}],
+                "itemWebUrl": "https://www.ebay.de/itm/123",
+            }]
+        }
+        response = Mock()
+        response.read.return_value = json.dumps(payload).encode("utf-8")
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        with (
+            patch.object(gui, "get_ebay_access_token", return_value="token"),
+            patch("urllib.request.urlopen", return_value=response) as urlopen,
+        ):
+            results = gui.search_ebay("4006381333931")
+        request = urlopen.call_args.args[0]
+        self.assertIn("gtin=4006381333931", request.full_url)
+        self.assertEqual(
+            request.headers["X-ebay-c-marketplace-id"], "EBAY_DE"
+        )
+        self.assertEqual(results[0][0], "Testprodukt")
+        self.assertIn("Kategorie: Elektronik", results[0][1])
+
     def test_isbn_10_and_13_are_normalized_and_cross_searched(self):
         self.assertEqual(
             ProductGeneratorGUI.isbn_search_variants("ISBN-10: 3442180651"),

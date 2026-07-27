@@ -24,6 +24,9 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 - ✅ **Quellen & Qualität**: Treffer zeigen Herkunft und geschätzte Übereinstimmung
 - ✅ **Sitzungswiederherstellung**: Offene Tabs und Entwürfe werden automatisch gesichert
 - ✅ **Buchkataloge**: ISBN-Metadaten zusätzlich über Open Library und Google Books
+- ✅ **Kleinanzeigen-Livesuche**: Optionale Inseratsuche über Kleinanzeigen Agent
+- ✅ **eBay-Livesuche**: Optionale Produktsuche über die offizielle eBay Browse API
+- ✅ **Sichere API-Zugangsdaten**: Speicherung im Betriebssystem-Schlüsselspeicher
 
 ## Installation
 
@@ -118,6 +121,28 @@ gegenseitig umgerechnet. Für Bücher fragt das Tool die Deutsche
 Nationalbibliothek, Open Library, Google Books und als Fallback ZVAB ab.
 Identische Titel werden zusammengeführt und ihre Quellen gemeinsam angezeigt.
 
+### eBay und Kleinanzeigen Agent
+
+Unter **Einstellungen → Marktplatz-APIs** können die Zugangsdaten für beide
+optionalen Quellen hinterlegt werden. Die Werte werden mit `keyring` im
+Schlüsselspeicher des Betriebssystems abgelegt und ausdrücklich nicht in
+`.eBayCreationToolConfig.json`, der Sitzungsdatei oder im Repository gespeichert.
+Alternativ erkennt die Anwendung die Umgebungsvariablen `KLAZ_API_KEY`,
+`EBAY_CLIENT_ID` und `EBAY_CLIENT_SECRET`.
+
+Für Kleinanzeigen Agent genügt dessen API-Key. Die Quelle liefert öffentliche
+Vergleichsinserate, Kategorien und strukturierte Merkmale. Für eBay werden
+Production-Zugangsdaten aus dem eBay Developers Program benötigt: App-ID
+(Client-ID) und Cert-ID (Client-Secret). Die Anwendung erzeugt daraus kurzlebige
+Application-Tokens und sucht auf dem Marktplatz `EBAY_DE` per Suchbegriff oder
+GTIN.
+
+Beide Integrationen dienen zunächst der Recherche und Entwurfserstellung.
+Kleinanzeigen Agent dokumentiert keine Funktion zum Veröffentlichen eigener
+Anzeigen. Das Einstellen auf eBay würde zusätzlich einen Benutzer-OAuth-Flow,
+Versand-/Zahlungsrichtlinien und weitere Pflichtangaben benötigen und ist noch
+nicht aktiviert.
+
 Amazon.de, Geizhals und Idealo sind experimentelle HTML-Provider. Amazon liefert
 Suchtreffer und – soweit zugänglich – Stichpunkte und technische Fakten der
 Produktseiten. Auch eine ASIN oder vollständige Amazon-Produkt-URL kann in das
@@ -140,7 +165,7 @@ Text anhand der mitgespeicherten Quelle geprüft werden.
 ## Geplante Features
 
 - 🔄 Weitere Hersteller-Connectoren und strukturierte Produktdaten
-- 🔗 eBay/Kleinanzeigen-API Integration
+- 🔗 Optionales Veröffentlichen über unterstützte offizielle Plattform-APIs
 - 📝 Custom Template-System
 - 💾 CSV-Import für Massendaten
 - 📊 Verkaufsstatistiken
