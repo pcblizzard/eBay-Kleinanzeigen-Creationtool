@@ -27,6 +27,9 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 - ✅ **Buchkataloge**: ISBN-Metadaten zusätzlich über Open Library und Google Books
 - ✅ **Kleinanzeigen-Livesuche**: Optionale Inseratsuche über Kleinanzeigen Agent
 - ✅ **eBay-Livesuche**: Optionale Produktsuche über die offizielle eBay Browse API
+- ✅ **eBay-Kategorievorschläge**: Passende Kategorien über die aktuelle Taxonomy API
+- ✅ **eBay-Artikelmerkmale**: Pflicht-, empfohlene und optionale Angaben dynamisch prüfen
+- ✅ **eBay-Datenprüfung**: Fehlende Pflichtmerkmale vor einem späteren Export sichtbar machen
 - ✅ **Sichere API-Zugangsdaten**: Speicherung im Betriebssystem-Schlüsselspeicher
 - ✅ **Sicherheitskontrollen**: Keyring-Prüfung, Verbindungstests und Secret-Löschung
 - ✅ **Geschützte Webimporte**: Größenlimits und Sperre lokaler Netzwerkziele
@@ -139,13 +142,23 @@ Vergleichsinserate, Kategorien und strukturierte Merkmale. Für eBay werden
 Production-Zugangsdaten aus dem eBay Developers Program benötigt: App-ID
 (Client-ID) und Cert-ID (Client-Secret). Die Anwendung erzeugt daraus kurzlebige
 Application-Tokens und sucht auf dem Marktplatz `EBAY_DE` per Suchbegriff oder
-GTIN.
+GTIN. Für ausgewählte Produkte schlägt die Taxonomy API passende deutsche
+eBay-Kategorien vor. Nach der Kategorieauswahl zeigt das Tool die aktuellen
+Pflicht-, empfohlenen und optionalen Artikelmerkmale an. Werte aus einem
+eBay-Produktdatensatz werden nach Möglichkeit vorausgefüllt und können im
+Prüfbereich bearbeitet werden.
+
+Die eBay-Sandbox liefert bei Kategorie-Vorschlägen laut eBay nur Test- und
+Platzhalterdaten. Das Tool überspringt diese Vorschläge deshalb in der Sandbox;
+bereits im Suchtreffer enthaltene Kategorien und deren Merkmale können weiterhin
+geprüft werden. Für echte Vorschläge ist die Production-Umgebung erforderlich.
 
 Beide Integrationen dienen zunächst der Recherche und Entwurfserstellung.
 Kleinanzeigen Agent dokumentiert keine Funktion zum Veröffentlichen eigener
 Anzeigen. Das Einstellen auf eBay würde zusätzlich einen Benutzer-OAuth-Flow,
 Versand-/Zahlungsrichtlinien und weitere Pflichtangaben benötigen und ist noch
-nicht aktiviert.
+nicht aktiviert. Der neue eBay-Prüfbereich veröffentlicht daher ausdrücklich
+nichts und verändert keine eBay-Angebote.
 
 Der Kleinanzeigen-Verbindungstest verwendet eine reguläre Ein-Treffer-Abfrage
 mit eindeutigem App-User-Agent. Strukturierte API-Fehler werden ohne Schlüssel

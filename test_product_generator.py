@@ -278,6 +278,122 @@ class OnlineProviderTests(unittest.TestCase):
         self.assertEqual(results[0][0], "Testprodukt")
         self.assertIn("Kategorie: Elektronik", results[0][1])
 
+    def test_ebay_category_suggestions_include_full_path(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        with (
+            patch.object(
+                gui, "get_ebay_default_category_tree_id", return_value="77"
+            ),
+            patch.object(gui, "ebay_api_json", return_value={
+                "categorySuggestions": [{
+                    "category": {
+                        "categoryId": "9355",
+                        "categoryName": "Handys & Smartphones",
+                    },
+                    "categoryTreeNodeAncestors": [
+                        {"category": {
+                            "categoryId": "15032",
+                            "categoryName": "Handys & Kommunikation",
+                        }},
+                        {"category": {
+                            "categoryId": "293",
+                            "categoryName": "Elektronik",
+                        }},
+                    ],
+                }]
+            }) as api,
+        ):
+            categories = gui.get_ebay_category_suggestions(
+                "Samsung Galaxy S23"
+            )
+        self.assertEqual(categories[0]["id"], "9355")
+        self.assertEqual(
+            categories[0]["path"],
+            "Elektronik > Handys & Kommunikation > Handys & Smartphones",
+        )
+        self.assertEqual(
+            api.call_args.args[1], {"q": "Samsung Galaxy S23"}
+        )
+
+    def test_ebay_aspects_mark_required_and_sort_them_first(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        payload = {
+            "aspects": [
+                {
+                    "localizedAspectName": "Farbe",
+                    "aspectConstraint": {"aspectUsage": "RECOMMENDED"},
+                    "aspectValues": [{"localizedValue": "Schwarz"}],
+                },
+                {
+                    "localizedAspectName": "Marke",
+                    "aspectConstraint": {
+                        "aspectRequired": True,
+                        "itemToAspectCardinality": "SINGLE",
+                    },
+                    "aspectValues": [{"localizedValue": "Samsung"}],
+                },
+            ]
+        }
+        with (
+            patch.object(
+                gui, "get_ebay_default_category_tree_id", return_value="77"
+            ),
+            patch.object(gui, "ebay_api_json", return_value=payload),
+        ):
+            aspects = gui.get_ebay_item_aspects("9355")
+        self.assertEqual([item["name"] for item in aspects], ["Marke", "Farbe"])
+        self.assertTrue(aspects[0]["required"])
+        self.assertTrue(aspects[1]["recommended"])
+        self.assertEqual(aspects[1]["values"], ["Schwarz"])
+
+    def test_ebay_required_aspect_completeness(self):
+        aspects = [
+            {"name": "Marke", "required": True},
+            {"name": "Farbe", "required": False},
+            {"name": "Speicherkapazität", "required": True},
+        ]
+        self.assertEqual(
+            ProductGeneratorGUI.missing_required_ebay_aspects(
+                aspects, {"Marke": "Samsung"}
+            ),
+            ["Speicherkapazität"],
+        )
+
+    def test_ebay_item_details_map_category_aspects_and_images(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        payload = {
+            "itemId": "v1|123|0",
+            "categoryId": "9355",
+            "categoryPath": "Elektronik|Handys & Smartphones",
+            "localizedAspects": [
+                {"name": "Farbe", "value": "Schwarz"}
+            ],
+            "image": {"imageUrl": "https://i.ebayimg.com/main.jpg"},
+            "product": {
+                "brand": "Samsung",
+                "gtins": ["4006381333931"],
+                "additionalImages": [
+                    {"imageUrl": "https://i.ebayimg.com/side.jpg"}
+                ],
+                "aspectGroups": [{
+                    "aspects": [{
+                        "localizedName": "Marke",
+                        "localizedValues": ["Samsung"],
+                    }]
+                }],
+            },
+        }
+        with patch.object(gui, "ebay_api_json", return_value=payload):
+            details = gui.get_ebay_item_details("v1|123|0")
+        self.assertEqual(details["category_id"], "9355")
+        self.assertEqual(
+            details["category_path"],
+            "Elektronik > Handys & Smartphones",
+        )
+        self.assertEqual(details["aspect_values"]["Marke"], "Samsung")
+        self.assertEqual(details["aspect_values"]["Farbe"], "Schwarz")
+        self.assertEqual(len(details["image_urls"]), 2)
+
     def test_isbn_10_and_13_are_normalized_and_cross_searched(self):
         self.assertEqual(
             ProductGeneratorGUI.isbn_search_variants("ISBN-10: 3442180651"),

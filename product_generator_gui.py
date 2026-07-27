@@ -137,6 +137,29 @@ TRANSLATIONS = {
         "copied_success": "Beitrag in die Zwischenablage kopiert",
         "export_button": "💾 Beitrag speichern",
         "open_in_new_tab": "In neuem Tab öffnen",
+        "ebay_check_frame": "eBay-Datenprüfung (noch keine Veröffentlichung)",
+        "ebay_category": "Kategorie:",
+        "ebay_category_loading": "Passende eBay-Kategorien werden geladen…",
+        "ebay_category_unavailable": "Keine eBay-Kategorie verfügbar",
+        "ebay_aspect": "Artikelmerkmal",
+        "ebay_value": "Wert",
+        "ebay_requirement": "Vorgabe",
+        "ebay_status": "Status",
+        "ebay_required": "Pflicht",
+        "ebay_recommended": "Empfohlen",
+        "ebay_optional": "Optional",
+        "ebay_missing": "Fehlt",
+        "ebay_complete": "Vorhanden",
+        "ebay_apply_value": "Wert übernehmen",
+        "ebay_check_ready": "Produktdaten für eBay vollständig",
+        "ebay_check_incomplete": "Noch fehlende eBay-Pflichtangaben:",
+        "ebay_check_hint": (
+            "Kategorie auswählen; Pflichtmerkmale werden anschließend geladen."
+        ),
+        "ebay_sandbox_taxonomy_hint": (
+            "Kategorie-Vorschläge sind in der eBay-Sandbox nur Testdaten. "
+            "Für echte Vorschläge Production verwenden."
+        ),
     },
     "en": {
         "title": "eBay Classifieds - Product Description Generator",
@@ -231,6 +254,29 @@ TRANSLATIONS = {
         "copied_success": "Listing copied to clipboard",
         "export_button": "💾 Save listing",
         "open_in_new_tab": "Open in new tab",
+        "ebay_check_frame": "eBay data check (not publishing yet)",
+        "ebay_category": "Category:",
+        "ebay_category_loading": "Loading matching eBay categories…",
+        "ebay_category_unavailable": "No eBay category available",
+        "ebay_aspect": "Item specific",
+        "ebay_value": "Value",
+        "ebay_requirement": "Requirement",
+        "ebay_status": "Status",
+        "ebay_required": "Required",
+        "ebay_recommended": "Recommended",
+        "ebay_optional": "Optional",
+        "ebay_missing": "Missing",
+        "ebay_complete": "Present",
+        "ebay_apply_value": "Apply value",
+        "ebay_check_ready": "Product data is complete for eBay",
+        "ebay_check_incomplete": "Missing required eBay item specifics:",
+        "ebay_check_hint": (
+            "Select a category; required item specifics will then be loaded."
+        ),
+        "ebay_sandbox_taxonomy_hint": (
+            "eBay Sandbox category suggestions contain test data only. "
+            "Use Production for real suggestions."
+        ),
     }
 }
 
@@ -657,6 +703,7 @@ class ProductGeneratorGUI:
         )
         self._ebay_access_token = None
         self._ebay_access_token_expires = 0
+        self._ebay_result_metadata = {}
         self.ebay_environment = config.get('ebay_environment', 'production')
         if self.ebay_environment not in ('production', 'sandbox'):
             self.ebay_environment = 'production'
@@ -680,6 +727,10 @@ class ProductGeneratorGUI:
         self.search_results = []
         self._search_after_id = None
         self._search_generation = 0
+        self._ebay_metadata_generation = 0
+        self.ebay_categories = []
+        self.ebay_aspects = []
+        self.ebay_aspect_values = {}
         
         self.style = ttk.Style()
         theme = 'vista' if 'vista' in self.style.theme_names() else 'clam'
@@ -862,6 +913,95 @@ class ProductGeneratorGUI:
             label=trans['open_in_new_tab'],
             command=self.open_selected_variant_in_new_tab,
         )
+
+        # ===== eBay-Kategorie und Artikelmerkmale =====
+        self.ebay_check_frame = ttk.LabelFrame(
+            self.root, text=trans['ebay_check_frame'], padding=8
+        )
+        self.ebay_check_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        category_row = ttk.Frame(self.ebay_check_frame)
+        category_row.pack(fill=tk.X)
+        self.ebay_category_label = ttk.Label(
+            category_row, text=trans['ebay_category']
+        )
+        self.ebay_category_label.pack(side=tk.LEFT)
+        self.ebay_category_var = tk.StringVar()
+        self.ebay_category_combo = ttk.Combobox(
+            category_row,
+            textvariable=self.ebay_category_var,
+            state='readonly',
+            width=70,
+        )
+        self.ebay_category_combo.pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0)
+        )
+        self.ebay_category_combo.bind(
+            '<<ComboboxSelected>>', self.on_ebay_category_selected
+        )
+        self.ebay_check_status_var = tk.StringVar(
+            value=trans['ebay_check_hint']
+        )
+        self.ebay_check_status_label = ttk.Label(
+            self.ebay_check_frame,
+            textvariable=self.ebay_check_status_var,
+            foreground='#555555',
+        )
+        self.ebay_check_status_label.pack(fill=tk.X, pady=(5, 4))
+
+        aspect_area = ttk.Frame(self.ebay_check_frame)
+        aspect_area.pack(fill=tk.X)
+        self.ebay_aspect_tree = ttk.Treeview(
+            aspect_area,
+            columns=('aspect', 'value', 'requirement', 'status'),
+            show='headings',
+            height=4,
+            selectmode='browse',
+        )
+        for column, label_key, width in (
+            ('aspect', 'ebay_aspect', 220),
+            ('value', 'ebay_value', 360),
+            ('requirement', 'ebay_requirement', 100),
+            ('status', 'ebay_status', 90),
+        ):
+            self.ebay_aspect_tree.heading(
+                column, text=trans[label_key]
+            )
+            self.ebay_aspect_tree.column(
+                column, width=width, minwidth=70,
+                stretch=column in ('aspect', 'value')
+            )
+        aspect_scrollbar = ttk.Scrollbar(
+            aspect_area, command=self.ebay_aspect_tree.yview
+        )
+        self.ebay_aspect_tree.configure(
+            yscrollcommand=aspect_scrollbar.set
+        )
+        self.ebay_aspect_tree.pack(
+            side=tk.LEFT, fill=tk.X, expand=True
+        )
+        aspect_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.ebay_aspect_tree.bind(
+            '<<TreeviewSelect>>', self.on_ebay_aspect_selected
+        )
+
+        aspect_edit_row = ttk.Frame(self.ebay_check_frame)
+        aspect_edit_row.pack(fill=tk.X, pady=(5, 0))
+        self.ebay_aspect_value_var = tk.StringVar()
+        self.ebay_aspect_value_combo = ttk.Combobox(
+            aspect_edit_row,
+            textvariable=self.ebay_aspect_value_var,
+            state='normal',
+        )
+        self.ebay_aspect_value_combo.pack(
+            side=tk.LEFT, fill=tk.X, expand=True
+        )
+        self.ebay_aspect_apply_button = ttk.Button(
+            aspect_edit_row,
+            text=trans['ebay_apply_value'],
+            command=self.apply_ebay_aspect_value,
+        )
+        self.ebay_aspect_apply_button.pack(side=tk.LEFT, padx=(6, 0))
+        self.ebay_check_frame.pack_forget()
         
         # ===== Frame 3: Vorschau =====
         self.preview_frame = ttk.LabelFrame(self.root, text=trans['preview_frame'], padding=10)
@@ -1160,6 +1300,7 @@ class ProductGeneratorGUI:
         self.preview_text.config(state=tk.NORMAL)
         self.preview_text.delete(1.0, tk.END)
         self.reset_product_image()
+        self.reset_ebay_data_check()
         
         if not search_term:
             self.status_var.set(trans['no_search_term'])
@@ -1254,6 +1395,13 @@ class ProductGeneratorGUI:
                 and str(description).startswith('Web-Suchvorschlag')
             ):
                 self.load_suggestion_details_async(self.selected_variant)
+
+            if self.provider_settings.get('ebay') or (
+                hasattr(self, 'provider_vars')
+                and self.provider_vars.get('ebay')
+                and self.provider_vars['ebay'].get()
+            ):
+                self.start_ebay_data_check(self.selected_variant)
             
             trans = TRANSLATIONS[self.language]
             self.status_var.set(f"{trans['selected_variant']} {self.selected_variant['name']}")
@@ -1293,6 +1441,287 @@ class ProductGeneratorGUI:
         self.variant_listbox.activate(index)
         self.variant_listbox.see(index)
         self.on_variant_selected()
+
+    def reset_ebay_data_check(self):
+        """Leert die eBay-Prüfung, ohne andere Tab-Zustände zu verändern."""
+        self._ebay_metadata_generation += 1
+        self.ebay_categories = []
+        self.ebay_aspects = []
+        self.ebay_aspect_values = {}
+        if not hasattr(self, 'ebay_check_frame'):
+            return
+        self.ebay_check_frame.pack_forget()
+        self.ebay_category_var.set('')
+        self.ebay_category_combo.configure(values=())
+        for item in self.ebay_aspect_tree.get_children():
+            self.ebay_aspect_tree.delete(item)
+        self.ebay_aspect_value_var.set('')
+        self.ebay_aspect_value_combo.configure(values=())
+        self.ebay_check_status_var.set(
+            TRANSLATIONS[self.language]['ebay_check_hint']
+        )
+
+    def start_ebay_data_check(self, variant):
+        """Lädt Kategorie, Produktdetails und Merkmale im Hintergrund."""
+        if not self.get_secret('ebay_client_id') or not self.get_secret(
+            'ebay_client_secret'
+        ):
+            return
+        self._ebay_metadata_generation += 1
+        generation = self._ebay_metadata_generation
+        trans = TRANSLATIONS[self.language]
+        self.ebay_check_frame.pack(
+            fill=tk.X, padx=10, pady=(0, 10),
+            before=self.preview_frame,
+        )
+        self.ebay_check_status_var.set(trans['ebay_category_loading'])
+        self.ebay_categories = []
+        self.ebay_aspects = []
+        self.ebay_aspect_values = dict(variant.get('ebay_aspect_values') or {})
+        for item in self.ebay_aspect_tree.get_children():
+            self.ebay_aspect_tree.delete(item)
+
+        def worker():
+            try:
+                details = {}
+                item_id = variant.get('ebay_item_id')
+                if item_id:
+                    try:
+                        details = self.get_ebay_item_details(item_id)
+                    except Exception:
+                        details = {}
+                category_id = (
+                    details.get('category_id')
+                    or variant.get('ebay_category_id')
+                )
+                categories = []
+                if category_id:
+                    categories.append({
+                        'id': str(category_id),
+                        'name': (
+                            details.get('category_name')
+                            or variant.get('ebay_category_name')
+                            or str(category_id)
+                        ),
+                        'path': details.get('category_path', ''),
+                    })
+                if self.ebay_environment == 'production':
+                    suggestions = self.get_ebay_category_suggestions(
+                        variant.get('name', '')
+                    )
+                    known = {entry['id'] for entry in categories}
+                    categories.extend(
+                        entry for entry in suggestions
+                        if entry['id'] not in known
+                    )
+                aspects = (
+                    self.get_ebay_item_aspects(categories[0]['id'])
+                    if categories else []
+                )
+            except Exception as exc:
+                self.root.after(
+                    0,
+                    lambda error=str(exc): self.apply_ebay_data_error(
+                        variant, generation, error
+                    ),
+                )
+                return
+            self.root.after(
+                0,
+                lambda: self.apply_ebay_data_check(
+                    variant, generation, details, categories, aspects
+                ),
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def apply_ebay_data_error(self, variant, generation, error):
+        if (
+            self._closed or self.selected_variant is not variant
+            or generation != self._ebay_metadata_generation
+        ):
+            return
+        self.ebay_check_status_var.set(error)
+
+    def apply_ebay_data_check(
+        self, variant, generation, details, categories, aspects
+    ):
+        if (
+            self._closed or self.selected_variant is not variant
+            or generation != self._ebay_metadata_generation
+        ):
+            return
+        self.ebay_categories = categories
+        if details:
+            variant.update({
+                key: value for key, value in details.items()
+                if value not in (None, '', [], {})
+            })
+            self.ebay_aspect_values.update(details.get('aspect_values') or {})
+            variant['ebay_aspect_values'] = dict(self.ebay_aspect_values)
+            image_urls = details.get('image_urls') or []
+            if image_urls:
+                variant['image_urls'] = image_urls
+                self.load_product_image_async(
+                    variant, variant.get('source_url', '')
+                )
+            product_facts = details.get('ebay_product_facts') or []
+            if product_facts and 'ebay.' in variant.get('source_url', ''):
+                description = '\n'.join(product_facts)
+                variant['description'] = {
+                    'de': description, 'en': description
+                }
+                draft = self.generator.build_sales_draft(
+                    variant['name'], description, self.language
+                )
+                self.preview_text.delete('1.0', tk.END)
+                self.preview_text.insert('1.0', draft)
+        labels = [self.ebay_category_display(entry) for entry in categories]
+        self.ebay_category_combo.configure(values=labels)
+        if labels:
+            self.ebay_category_combo.current(0)
+            variant['ebay_category_id'] = categories[0]['id']
+            variant['ebay_category_name'] = categories[0]['name']
+            self.populate_ebay_aspects(aspects)
+        else:
+            self.ebay_category_var.set('')
+            self.ebay_check_status_var.set(
+                TRANSLATIONS[self.language]['ebay_category_unavailable']
+            )
+
+    @staticmethod
+    def ebay_category_display(category):
+        path = category.get('path', '').strip()
+        name = category.get('name', '').strip()
+        category_id = category.get('id', '')
+        return f"{path or name} ({category_id})"
+
+    def on_ebay_category_selected(self, event=None):
+        index = self.ebay_category_combo.current()
+        if not (0 <= index < len(self.ebay_categories)):
+            return
+        category = self.ebay_categories[index]
+        variant = self.selected_variant
+        if variant is None:
+            return
+        variant['ebay_category_id'] = category['id']
+        variant['ebay_category_name'] = category['name']
+        self._ebay_metadata_generation += 1
+        generation = self._ebay_metadata_generation
+        self.ebay_check_status_var.set(
+            TRANSLATIONS[self.language]['details_loading']
+        )
+
+        def worker():
+            try:
+                aspects = self.get_ebay_item_aspects(category['id'])
+                error = ''
+            except Exception as exc:
+                aspects, error = [], str(exc)
+            self.root.after(
+                0,
+                lambda: (
+                    self.apply_ebay_data_error(variant, generation, error)
+                    if error else self.apply_selected_ebay_aspects(
+                        variant, generation, aspects
+                    )
+                ),
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def apply_selected_ebay_aspects(self, variant, generation, aspects):
+        if (
+            self.selected_variant is not variant
+            or generation != self._ebay_metadata_generation
+        ):
+            return
+        self.populate_ebay_aspects(aspects)
+
+    def populate_ebay_aspects(self, aspects):
+        self.ebay_aspects = aspects
+        for item in self.ebay_aspect_tree.get_children():
+            self.ebay_aspect_tree.delete(item)
+        trans = TRANSLATIONS[self.language]
+        for index, aspect in enumerate(aspects):
+            name = aspect['name']
+            value = self.ebay_aspect_values.get(name, '')
+            requirement = (
+                trans['ebay_required'] if aspect['required']
+                else trans['ebay_recommended'] if aspect['recommended']
+                else trans['ebay_optional']
+            )
+            status = (
+                trans['ebay_complete'] if value
+                else trans['ebay_missing'] if aspect['required'] else ''
+            )
+            self.ebay_aspect_tree.insert(
+                '', tk.END, iid=str(index),
+                values=(name, value, requirement, status),
+            )
+        self.update_ebay_completeness()
+
+    def on_ebay_aspect_selected(self, event=None):
+        selection = self.ebay_aspect_tree.selection()
+        if not selection:
+            return
+        index = int(selection[0])
+        if not (0 <= index < len(self.ebay_aspects)):
+            return
+        aspect = self.ebay_aspects[index]
+        self.ebay_aspect_value_var.set(
+            self.ebay_aspect_values.get(aspect['name'], '')
+        )
+        self.ebay_aspect_value_combo.configure(
+            values=aspect.get('values', ())
+        )
+
+    def apply_ebay_aspect_value(self):
+        selection = self.ebay_aspect_tree.selection()
+        if not selection:
+            return
+        index = int(selection[0])
+        if not (0 <= index < len(self.ebay_aspects)):
+            return
+        aspect = self.ebay_aspects[index]
+        value = self.normalize_text(self.ebay_aspect_value_var.get())
+        if value:
+            self.ebay_aspect_values[aspect['name']] = value
+        else:
+            self.ebay_aspect_values.pop(aspect['name'], None)
+        if self.selected_variant is not None:
+            self.selected_variant['ebay_aspect_values'] = dict(
+                self.ebay_aspect_values
+            )
+        self.populate_ebay_aspects(self.ebay_aspects)
+        self.ebay_aspect_tree.selection_set(str(index))
+
+    @staticmethod
+    def missing_required_ebay_aspects(aspects, values):
+        return [
+            aspect['name'] for aspect in aspects
+            if aspect.get('required') and not str(values.get(
+                aspect['name'], ''
+            )).strip()
+        ]
+
+    def update_ebay_completeness(self):
+        trans = TRANSLATIONS[self.language]
+        missing = self.missing_required_ebay_aspects(
+            self.ebay_aspects, self.ebay_aspect_values
+        )
+        if missing:
+            self.ebay_check_status_var.set(
+                f"{trans['ebay_check_incomplete']} {', '.join(missing)}"
+            )
+        elif self.ebay_aspects:
+            self.ebay_check_status_var.set(trans['ebay_check_ready'])
+        elif self.ebay_environment == 'sandbox':
+            self.ebay_check_status_var.set(
+                trans['ebay_sandbox_taxonomy_hint']
+            )
+        else:
+            self.ebay_check_status_var.set(trans['ebay_check_hint'])
 
     def on_draft_modified(self, *args):
         if not self.preview_text.edit_modified():
@@ -1790,6 +2219,16 @@ class ProductGeneratorGUI:
         self.search_frame.config(text=trans['search_frame'])
         self.search_label_widget.config(text=trans['search_label'])
         self.variant_frame.config(text=trans['variant_frame'])
+        self.ebay_check_frame.config(text=trans['ebay_check_frame'])
+        self.ebay_category_label.config(text=trans['ebay_category'])
+        self.ebay_aspect_apply_button.config(text=trans['ebay_apply_value'])
+        for column, label_key in (
+            ('aspect', 'ebay_aspect'),
+            ('value', 'ebay_value'),
+            ('requirement', 'ebay_requirement'),
+            ('status', 'ebay_status'),
+        ):
+            self.ebay_aspect_tree.heading(column, text=trans[label_key])
         self.preview_frame.config(text=trans['preview_frame'])
         self.editor_frame.config(text=trans['editor_label'])
         self.rendered_frame.config(text=trans['live_preview_label'])
@@ -2068,6 +2507,9 @@ class ProductGeneratorGUI:
                     'sources': [self.source_name(source_url)],
                     'quality': self.match_quality(
                         search_term, title, source_url
+                    ),
+                    **copy.deepcopy(
+                        self._ebay_result_metadata.get(source_url, {})
                     ),
                 },
             }
@@ -2642,12 +3084,208 @@ class ProductGeneratorGUI:
             )
             if short_description:
                 facts.append(short_description)
+            source_url = (
+                item.get('itemWebUrl')
+                or item.get('itemAffiliateWebUrl', '')
+            )
+            image = item.get('image') or {}
+            additional_images = item.get('additionalImages') or []
+            metadata = {
+                'ebay_item_id': item.get('itemId', ''),
+                'ebay_category_id': (
+                    categories[0].get('categoryId', '')
+                    if categories else ''
+                ),
+                'ebay_category_name': (
+                    categories[0].get('categoryName', '')
+                    if categories else ''
+                ),
+                'image_urls': [
+                    candidate.get('imageUrl')
+                    for candidate in [image] + additional_images
+                    if candidate.get('imageUrl')
+                ],
+            }
+            if source_url:
+                if not hasattr(self, '_ebay_result_metadata'):
+                    self._ebay_result_metadata = {}
+                self._ebay_result_metadata[source_url] = metadata
             results.append((
                 title,
                 '\n'.join(facts) or "Öffentliches eBay-Vergleichsangebot",
-                item.get('itemWebUrl') or item.get('itemAffiliateWebUrl', ''),
+                source_url,
             ))
         return results
+
+    def ebay_api_json(self, path, parameters=None, marketplace=True):
+        """Ruft eine aktuelle eBay-REST-API mit Application-Token auf."""
+        token = self.get_ebay_access_token()
+        api_host = (
+            'api.sandbox.ebay.com'
+            if getattr(self, 'ebay_environment', 'production') == 'sandbox'
+            else 'api.ebay.com'
+        )
+        endpoint = f"https://{api_host}{path}"
+        if parameters:
+            endpoint += '?' + urllib.parse.urlencode(parameters)
+        headers = {
+            'Authorization': f"Bearer {token}",
+            'Accept': 'application/json',
+            'Accept-Language': 'de-DE',
+        }
+        if marketplace:
+            headers['X-EBAY-C-MARKETPLACE-ID'] = 'EBAY_DE'
+        request = urllib.request.Request(endpoint, headers=headers)
+        with urllib.request.urlopen(request, timeout=20) as response:
+            data = response.read(MAX_TEXT_RESPONSE_BYTES + 1)
+        if len(data) > MAX_TEXT_RESPONSE_BYTES:
+            raise ValueError("eBay-Antwort ist zu groß")
+        return json.loads(data.decode('utf-8'))
+
+    def get_ebay_item_details(self, item_id):
+        """Lädt Produktdaten, Merkmale und Bilder eines Browse-Treffers."""
+        payload = self.ebay_api_json(
+            '/buy/browse/v1/item/'
+            + urllib.parse.quote(str(item_id), safe=''),
+            {'fieldgroups': 'PRODUCT'},
+        )
+        product = payload.get('product') or {}
+        aspect_values = {}
+        for group in product.get('aspectGroups') or []:
+            for aspect in group.get('aspects') or []:
+                name = self.normalize_text(aspect.get('localizedName', ''))
+                values = [
+                    self.normalize_text(value)
+                    for value in aspect.get('localizedValues') or []
+                    if self.normalize_text(value)
+                ]
+                if name and values:
+                    aspect_values[name] = ', '.join(values)
+        for aspect in payload.get('localizedAspects') or []:
+            name = self.normalize_text(aspect.get('name', ''))
+            value = self.normalize_text(aspect.get('value', ''))
+            if name and value:
+                aspect_values[name] = value
+        image_urls = []
+        for image in (
+            [product.get('image') or {}, payload.get('image') or {}]
+            + list(product.get('additionalImages') or [])
+            + list(payload.get('additionalImages') or [])
+        ):
+            url = image.get('imageUrl')
+            if url and url not in image_urls:
+                image_urls.append(url)
+        facts = []
+        if product.get('brand'):
+            facts.append(f"Marke: {self.normalize_text(product['brand'])}")
+        if product.get('mpns'):
+            facts.append(f"Herstellernummer: {', '.join(product['mpns'])}")
+        if product.get('gtins'):
+            facts.append(f"GTIN: {', '.join(product['gtins'])}")
+        facts.extend(
+            f"{name}: {value}" for name, value in aspect_values.items()
+        )
+        return {
+            'ebay_item_id': payload.get('itemId') or item_id,
+            'ebay_category_id': payload.get('categoryId', ''),
+            'ebay_category_name': (
+                str(payload.get('categoryPath', '')).split('|')[-1]
+            ),
+            'category_id': payload.get('categoryId', ''),
+            'category_name': (
+                str(payload.get('categoryPath', '')).split('|')[-1]
+            ),
+            'category_path': str(
+                payload.get('categoryPath', '')
+            ).replace('|', ' > '),
+            'aspect_values': aspect_values,
+            'image_urls': image_urls,
+            'ebay_product_facts': facts,
+        }
+
+    def get_ebay_default_category_tree_id(self):
+        payload = self.ebay_api_json(
+            '/commerce/taxonomy/v1/get_default_category_tree_id',
+            {'marketplace_id': 'EBAY_DE'},
+            marketplace=False,
+        )
+        return str(payload['categoryTreeId'])
+
+    def get_ebay_category_suggestions(self, query):
+        """Liefert relevante deutsche eBay-Blattkategorien."""
+        tree_id = self.get_ebay_default_category_tree_id()
+        payload = self.ebay_api_json(
+            '/commerce/taxonomy/v1/category_tree/'
+            f"{urllib.parse.quote(tree_id, safe='')}/get_category_suggestions",
+            {'q': query},
+            marketplace=False,
+        )
+        results = []
+        for suggestion in payload.get('categorySuggestions') or []:
+            category = suggestion.get('category') or {}
+            category_id = str(category.get('categoryId', '')).strip()
+            name = self.normalize_text(category.get('categoryName', ''))
+            if not category_id or not name:
+                continue
+            ancestors = [
+                self.normalize_text(
+                    (entry.get('category') or {}).get('categoryName', '')
+                )
+                for entry in reversed(
+                    suggestion.get('categoryTreeNodeAncestors') or []
+                )
+            ]
+            path = ' > '.join(
+                value for value in ancestors + [name] if value
+            )
+            results.append({
+                'id': category_id,
+                'name': name,
+                'path': path,
+            })
+        return results[:8]
+
+    def get_ebay_item_aspects(self, category_id):
+        """Lädt Pflicht-, empfohlene und optionale Artikelmerkmale."""
+        tree_id = self.get_ebay_default_category_tree_id()
+        payload = self.ebay_api_json(
+            '/commerce/taxonomy/v1/category_tree/'
+            f"{urllib.parse.quote(tree_id, safe='')}/"
+            'get_item_aspects_for_category',
+            {'category_id': str(category_id)},
+            marketplace=False,
+        )
+        aspects = []
+        for entry in payload.get('aspects') or []:
+            name = self.normalize_text(entry.get('localizedAspectName', ''))
+            if not name:
+                continue
+            constraint = entry.get('aspectConstraint') or {}
+            values = [
+                self.normalize_text(value.get('localizedValue', ''))
+                for value in entry.get('aspectValues') or []
+                if self.normalize_text(value.get('localizedValue', ''))
+            ]
+            aspects.append({
+                'name': name,
+                'required': bool(constraint.get('aspectRequired')),
+                'recommended': str(
+                    constraint.get('aspectUsage', '')
+                ).upper() == 'RECOMMENDED',
+                'values': values,
+                'mode': constraint.get('aspectMode', ''),
+                'cardinality': constraint.get(
+                    'itemToAspectCardinality', 'SINGLE'
+                ),
+            })
+        aspects.sort(
+            key=lambda entry: (
+                not entry['required'],
+                not entry['recommended'],
+                entry['name'].casefold(),
+            )
+        )
+        return aspects
 
     def search_geizhals(self, search_term):
         return self.search_spelling_variants(

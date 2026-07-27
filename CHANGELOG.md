@@ -2,6 +2,16 @@
 
 ## Unveröffentlicht
 
+- eBay-Kategorievorschläge über die aktuelle Commerce Taxonomy API ergänzt.
+- Kategoriepfade sowie Pflicht-, empfohlene und optionale Artikelmerkmale werden
+  pro Beitrag in einem unabhängigen Prüfbereich dargestellt.
+- Artikelmerkmale können mit eBay-Wertvorschlägen bearbeitet werden; eine
+  Vollständigkeitsanzeige nennt noch fehlende Pflichtwerte.
+- Die Browse API lädt für ausgewählte eBay-Treffer zusätzliche Produktdetails,
+  strukturierte Merkmale und Produktbilder nach.
+- Sandbox und Production bleiben getrennt; unbrauchbare Sandbox-
+  Kategorieplatzhalter werden nicht als echte Vorschläge angezeigt.
+- Die eingestellte Finding API wird bewusst nicht als Fallback verwendet.
 - Kleinanzeigen-Agent-Anfragen senden nun einen eindeutigen App-User-Agent;
   der zuvor mit gültigen Keys mögliche HTTP-403-Verbindungstest ist behoben.
 - Der Verbindungstest nutzt eine minimale reguläre Ein-Treffer-Abfrage und zeigt
