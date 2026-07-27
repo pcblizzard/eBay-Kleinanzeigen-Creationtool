@@ -19,6 +19,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 import threading
+import time
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -59,6 +60,12 @@ TRANSLATIONS = {
         "saved_success": "Datei erfolgreich gespeichert:",
         "font_size_label": "Schriftgröße:",
         "menu_settings": "Einstellungen",
+        "menu_file": "Datei",
+        "menu_new": "Neu",
+        "menu_open": "Öffnen…",
+        "menu_save": "Speichern",
+        "menu_exit": "Beenden",
+        "open_file_title": "Vorhandenen Verkaufsbeitrag öffnen",
         "menu_open_settings": "Einstellungen öffnen…",
         "menu_change_save_path": "Speicherpfad ändern",
         "menu_default_save_path": "Standard-Speicherort wählen",
@@ -83,6 +90,9 @@ TRANSLATIONS = {
         "config_load_error": "Fehler beim Laden der Konfiguration",
         "config_save_error": "Fehler beim Speichern der Konfiguration",
         "settings_saved": "Einstellungen gespeichert",
+        "copy_button": "📋 Beitrag kopieren",
+        "copied_success": "Beitrag in die Zwischenablage kopiert",
+        "export_button": "💾 Beitrag speichern",
     },
     "en": {
         "title": "eBay Classifieds - Product Description Generator",
@@ -109,6 +119,12 @@ TRANSLATIONS = {
         "saved_success": "File saved successfully:",
         "font_size_label": "Font size:",
         "menu_settings": "Options",
+        "menu_file": "File",
+        "menu_new": "New",
+        "menu_open": "Open…",
+        "menu_save": "Save",
+        "menu_exit": "Exit",
+        "open_file_title": "Open existing listing",
         "menu_open_settings": "Open settings…",
         "menu_change_save_path": "Change save path",
         "menu_default_save_path": "Select default save location",
@@ -133,6 +149,9 @@ TRANSLATIONS = {
         "config_load_error": "Error loading configuration",
         "config_save_error": "Error saving configuration",
         "settings_saved": "Settings saved",
+        "copy_button": "📋 Copy listing",
+        "copied_success": "Listing copied to clipboard",
+        "export_button": "💾 Save listing",
     }
 }
 
@@ -518,6 +537,9 @@ class ProductGenerator:
 
 class ProductGeneratorGUI:
     """GUI für den Produktgenerator"""
+
+    _search_cache = {}
+    _search_cache_ttl = 15 * 60
     
     def __init__(
         self, root, embedded=False, close_callback=None, title_callback=None,
@@ -553,6 +575,7 @@ class ProductGeneratorGUI:
             self.save_path = project_output
         
         self.selected_variant = None
+        self.opened_file_path = None
         self.search_results = []
         self._search_after_id = None
         self._search_generation = 0
@@ -905,7 +928,9 @@ class ProductGeneratorGUI:
         else:
             # Lokale Treffer sofort anzeigen; die Online-Suche ergänzt sie.
             for result in self.search_results:
-                self.variant_listbox.insert(tk.END, result['variant']['name'])
+                self.variant_listbox.insert(
+                    tk.END, self.result_display_label(result)
+                )
             self.status_var.set(
                 f"{len(self.search_results)} {trans['variants_found']}"
             )
@@ -1053,8 +1078,10 @@ class ProductGeneratorGUI:
 
         def worker():
             try:
-                html = self.fetch_url(source_url)
-                image_url = self.extract_product_image_url(html, source_url)
+                image_url = variant.get('image_url', '')
+                if not image_url:
+                    html = self.fetch_url(source_url)
+                    image_url = self.extract_product_image_url(html, source_url)
                 if not image_url:
                     return
                 image_data = self.fetch_binary(image_url)
@@ -1086,6 +1113,59 @@ class ProductGeneratorGUI:
 
     @staticmethod
     def extract_product_image_url(html, page_url):
+        def normalized_url(value):
+            value = html_lib.unescape(value).replace('\\_', '_')
+            if 'm.media-amazon.com/' in value:
+                value = re.sub(
+                    r'\.\*([A-Z]{2}\d+)\*\.', r'._\1_.', value
+                )
+            return urllib.parse.urljoin(page_url, value)
+
+        landing_tag = re.search(
+            r'<img\b[^>]*(?:id=["\']landingImage["\']|'
+            r'data-a-image-name=["\']landingImage["\'])[^>]*>',
+            html,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if landing_tag:
+            tag = landing_tag.group(0)
+            high_resolution = re.search(
+                r'data-old-hires=["\']([^"\']+)["\']',
+                tag,
+                re.IGNORECASE,
+            )
+            if high_resolution and high_resolution.group(1).strip():
+                return normalized_url(high_resolution.group(1).strip())
+            dynamic = re.search(
+                r'data-a-dynamic-image=["\']([^"\']+)["\']',
+                tag,
+                re.IGNORECASE,
+            )
+            if dynamic:
+                dynamic_value = html_lib.unescape(dynamic.group(1))
+                candidates = re.findall(
+                    r'https?://[^"\\\s]+?\.(?:jpg|jpeg|png|webp)',
+                    dynamic_value,
+                    re.IGNORECASE,
+                )
+                if candidates:
+                    return normalized_url(max(
+                        candidates,
+                        key=lambda value: max(
+                            [
+                                int(number)
+                                for number in re.findall(
+                                    r'(?:SL|SX|SY)(\d+)', value
+                                )
+                            ] or [0]
+                        ),
+                    ))
+            source = re.search(
+                r'\bsrc=["\']([^"\']+)["\']', tag, re.IGNORECASE
+            )
+            if source:
+                return normalized_url(source.group(1))
+
         patterns = (
             r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)',
             r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
@@ -1099,9 +1179,7 @@ class ProductGeneratorGUI:
         for pattern in patterns:
             match = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
             if match:
-                return urllib.parse.urljoin(
-                    page_url, html_lib.unescape(match.group(1))
-                )
+                return normalized_url(match.group(1))
         return ''
 
     def fetch_binary(self, url):
@@ -1228,6 +1306,20 @@ class ProductGeneratorGUI:
         ).start()
 
     def _online_search_thread(self, search_term, enabled, request_id):
+        cache_key = (
+            search_term.casefold().strip(),
+            tuple(sorted(name for name, active in enabled.items() if active)),
+        )
+        cached = self._search_cache.get(cache_key)
+        if cached and time.monotonic() - cached[0] < self._search_cache_ttl:
+            results, errors = cached[1], cached[2]
+            self.root.after(
+                0,
+                lambda: self.apply_online_results(
+                    search_term, request_id, results, errors
+                ),
+            )
+            return
         descriptions = []
         errors = []
         providers = []
@@ -1236,6 +1328,8 @@ class ProductGeneratorGUI:
                 ('Deutsche Nationalbibliothek', self.search_dnb_isbn)
             )
             providers.append(('ZVAB ISBN', self.search_zvab_isbn))
+            providers.append(('Open Library', self.search_open_library))
+            providers.append(('Google Books', self.search_google_books))
         if enabled.get('web_suggestions'):
             providers.append(('Web', self.search_web_suggestions))
         if enabled.get('wikipedia'):
@@ -1289,6 +1383,9 @@ class ProductGeneratorGUI:
                 ),
                 reverse=True,
             )
+        self._search_cache[cache_key] = (
+            time.monotonic(), unique_results, errors
+        )
         self.root.after(
             0,
             lambda: self.apply_online_results(
@@ -1319,20 +1416,37 @@ class ProductGeneratorGUI:
                     'name': title,
                     'description': {'de': desc, 'en': desc},
                     'source_url': source_url,
+                    'sources': [self.source_name(source_url)],
+                    'quality': self.match_quality(
+                        search_term, title, source_url
+                    ),
                 },
             }
             for title, desc, source_url in results
         ]
-        existing_names = {
-            re.sub(r'\W+', ' ', result['variant']['name'].lower()).strip()
+        existing = {
+            re.sub(
+                r'\W+', ' ', result['variant']['name'].lower()
+            ).strip(): result
             for result in self.search_results
         }
-        self.search_results.extend(
-            result for result in online_results
-            if re.sub(
+        for result in online_results:
+            identity = re.sub(
                 r'\W+', ' ', result['variant']['name'].lower()
-            ).strip() not in existing_names
-        )
+            ).strip()
+            previous = existing.get(identity)
+            if previous:
+                previous_variant = previous['variant']
+                sources = previous_variant.setdefault(
+                    'sources',
+                    [self.source_name(previous_variant.get('source_url', ''))],
+                )
+                for source in result['variant']['sources']:
+                    if source not in sources:
+                        sources.append(source)
+                continue
+            self.search_results.append(result)
+            existing[identity] = result
         self.populate_online_results()
 
     def load_amazon_details_async(self, variant):
@@ -1511,7 +1625,9 @@ class ProductGeneratorGUI:
         selected_variant = self.selected_variant
         self.variant_listbox.delete(0, tk.END)
         for result in self.search_results:
-            self.variant_listbox.insert(tk.END, result['variant']['name'])
+            self.variant_listbox.insert(
+                tk.END, self.result_display_label(result)
+            )
         self.status_var.set(f"{len(self.search_results)} {trans['online_results']}")
         selected_index = next(
             (
@@ -1521,6 +1637,65 @@ class ProductGeneratorGUI:
             0,
         )
         self.select_result_index(selected_index)
+
+    @staticmethod
+    def source_name(source_url):
+        host = urllib.parse.urlparse(source_url or '').netloc.lower()
+        if 'amazon.' in host:
+            return 'Amazon'
+        if 'geizhals.' in host:
+            return 'Geizhals'
+        if 'idealo.' in host:
+            return 'Idealo'
+        if 'wikipedia.' in host:
+            return 'Wikipedia'
+        if 'd-nb.info' in host:
+            return 'DNB'
+        if 'zvab.' in host or 'abebooks.' in host:
+            return 'ZVAB'
+        if 'openlibrary.' in host:
+            return 'Open Library'
+        if 'googleapis.' in host or 'books.google.' in host:
+            return 'Google Books'
+        if 'suggestqueries.google.' in host:
+            return 'Web-Vorschlag'
+        return host.removeprefix('www.') or 'Lokal'
+
+    @staticmethod
+    def match_quality(query, title, source_url=''):
+        normalized_query = re.sub(r'\W+', ' ', query.lower()).strip()
+        normalized_title = re.sub(r'\W+', ' ', title.lower()).strip()
+        exact_identifier = bool(
+            re.fullmatch(r'[0-9Xx-]{10,17}|B0[A-Z0-9]{8}', query.strip())
+        )
+        if exact_identifier or normalized_query == normalized_title:
+            return 'exakt'
+        ratio = difflib.SequenceMatcher(
+            None, normalized_query, normalized_title
+        ).ratio()
+        coverage = (
+            sum(word in normalized_title for word in normalized_query.split())
+            / max(1, len(normalized_query.split()))
+        )
+        if ratio >= .82 or coverage == 1:
+            return 'hoch'
+        if ratio >= .58 or coverage >= .6:
+            return 'mittel'
+        return 'unsicher'
+
+    def result_display_label(self, result):
+        variant = result['variant']
+        sources = variant.get('sources') or [
+            self.source_name(variant.get('source_url', ''))
+        ]
+        quality = variant.get('quality') or self.match_quality(
+            self.search_var.get(), variant.get('name', ''),
+            variant.get('source_url', '')
+        )
+        return (
+            f"{variant.get('name', '')}  "
+            f"[{' + '.join(sources)} · {quality}]"
+        )
 
     @staticmethod
     def normalize_isbn(value):
@@ -1809,6 +1984,99 @@ class ProductGeneratorGUI:
         if not description:
             description = f"• ISBN-13: {isbn13}"
         return [(title, description, source_url)]
+
+    def search_open_library(self, search_term):
+        """Liest strukturierte Buchdaten über die öffentliche Search API."""
+        isbn = self.normalize_isbn(search_term)
+        if not isbn:
+            return []
+        endpoint = "https://openlibrary.org/search.json?" + urllib.parse.urlencode({
+            'isbn': isbn,
+            'fields': (
+                'key,title,author_name,publisher,first_publish_year,isbn,'
+                'number_of_pages_median,language'
+            ),
+            'limit': 3,
+        })
+        try:
+            payload = json.loads(self.fetch_url(endpoint))
+        except Exception:
+            return []
+        results = []
+        for item in payload.get('docs', []):
+            title = unicodedata.normalize(
+                'NFC', str(item.get('title') or '')
+            ).strip()
+            if not title:
+                continue
+            facts = []
+            for label, value in (
+                ('Autor', ', '.join(item.get('author_name') or [])),
+                ('Verlag', ', '.join((item.get('publisher') or [])[:3])),
+                ('Erscheinungsdatum', item.get('first_publish_year')),
+                ('Anzahl der Seiten', item.get('number_of_pages_median')),
+                ('ISBN', isbn),
+            ):
+                if value:
+                    facts.append(f"{label}: {value}")
+            key = str(item.get('key') or '')
+            source = (
+                urllib.parse.urljoin('https://openlibrary.org', key)
+                if key else f"https://openlibrary.org/isbn/{isbn}"
+            )
+            results.append((title, '\n'.join(facts), source))
+        return results
+
+    def search_google_books(self, search_term):
+        """Liest öffentliche Google-Books-Metadaten anhand einer ISBN."""
+        isbn = self.normalize_isbn(search_term)
+        if not isbn:
+            return []
+        endpoint = (
+            "https://www.googleapis.com/books/v1/volumes?"
+            + urllib.parse.urlencode({
+                'q': f'isbn:{isbn}',
+                'maxResults': 3,
+                'printType': 'books',
+            })
+        )
+        try:
+            payload = json.loads(self.fetch_url(endpoint))
+        except Exception:
+            # Ohne API-Schlüssel kann Google öffentliche Anfragen begrenzen.
+            # Die anderen ISBN-Provider laufen unabhängig weiter.
+            return []
+        results = []
+        for item in payload.get('items', []):
+            info = item.get('volumeInfo') or {}
+            title = unicodedata.normalize(
+                'NFC', str(info.get('title') or '')
+            ).strip()
+            if not title:
+                continue
+            subtitle = str(info.get('subtitle') or '').strip()
+            if subtitle and subtitle.casefold() not in title.casefold():
+                title = f"{title}: {subtitle}"
+            facts = []
+            for label, value in (
+                ('Autor', ', '.join(info.get('authors') or [])),
+                ('Verlag', info.get('publisher')),
+                ('Erscheinungsdatum', info.get('publishedDate')),
+                ('Anzahl der Seiten', info.get('pageCount')),
+                ('Sprache', info.get('language')),
+                ('ISBN', isbn),
+                ('Produktübersicht', self.clean_html_text(
+                    info.get('description') or ''
+                )),
+            ):
+                if value:
+                    facts.append(f"{label}: {value}")
+            source = (
+                info.get('infoLink')
+                or f"https://books.google.com/books?id={item.get('id', '')}"
+            )
+            results.append((title, '\n'.join(facts), source))
+        return results
 
     @staticmethod
     def clean_marc_text(value):
@@ -2235,20 +2503,27 @@ class ProductGeneratorGUI:
         def save_async():
             try:
                 # Dateiname sanitieren
-                filename = self.selected_variant['name'].replace('/', '_').replace('\\', '_').replace(':', '')
-                filepath = Path(self.save_path) / f"{filename}.txt"
-                
-                # Falls Datei existiert, mit Nummer versehen
-                counter = 1
-                original_path = filepath
-                while filepath.exists():
-                    name_parts = original_path.stem.rsplit('_', 1)
-                    if name_parts[-1].isdigit():
-                        base_name = name_parts[0]
-                    else:
-                        base_name = original_path.stem
-                    filepath = Path(self.save_path) / f"{base_name}_{counter}.txt"
-                    counter += 1
+                if self.opened_file_path:
+                    filepath = Path(self.opened_file_path)
+                else:
+                    filename = self.selected_variant['name'].replace(
+                        '/', '_'
+                    ).replace('\\', '_').replace(':', '')
+                    filepath = Path(self.save_path) / f"{filename}.txt"
+
+                    # Neue Beiträge überschreiben keine vorhandenen Dateien.
+                    counter = 1
+                    original_path = filepath
+                    while filepath.exists():
+                        name_parts = original_path.stem.rsplit('_', 1)
+                        if name_parts[-1].isdigit():
+                            base_name = name_parts[0]
+                        else:
+                            base_name = original_path.stem
+                        filepath = (
+                            Path(self.save_path) / f"{base_name}_{counter}.txt"
+                        )
+                        counter += 1
                 
                 # Datei schreiben
                 with open(filepath, 'w', encoding='utf-8') as f:
@@ -2271,6 +2546,20 @@ class ProductGeneratorGUI:
         thread = threading.Thread(target=save_async, daemon=True)
         thread.start()
 
+    def copy_listing(self):
+        """Kopiert den vollständigen Beitrag inklusive Pflichttext."""
+        trans = TRANSLATIONS[self.language]
+        if not self.selected_variant:
+            messagebox.showwarning(trans['no_selection'], trans['no_selection'])
+            return
+        edited = self.preview_text.get("1.0", tk.END).strip()
+        listing = self.generator.generate_listing(
+            self.selected_variant, self.language, edited
+        )
+        self.root.clipboard_clear()
+        self.root.clipboard_append(listing)
+        self.status_var.set(trans['copied_success'])
+
 
 class TabbedProductGeneratorGUI:
     """Verwaltet mehrere vollständig unabhängige Verkaufsbeiträge."""
@@ -2283,6 +2572,7 @@ class TabbedProductGeneratorGUI:
         self.controllers = {}
         self.retired_tabs = []
         self.tab_counter = 0
+        self.session_file = Path.home() / ".eBayCreationToolSession.json"
 
         toolbar = ttk.Frame(root, padding=(8, 6))
         toolbar.pack(fill=tk.X)
@@ -2298,11 +2588,41 @@ class TabbedProductGeneratorGUI:
             command=self.close_current_tab,
         )
         self.close_tab_button.pack(side=tk.LEFT)
+        self.export_button = ttk.Button(
+            toolbar,
+            text=TRANSLATIONS['de']['export_button'],
+            command=lambda: self.run_on_active('save_file'),
+        )
+        self.export_button.pack(side=tk.LEFT, padx=(12, 6))
+        self.copy_button = ttk.Button(
+            toolbar,
+            text=TRANSLATIONS['de']['copy_button'],
+            command=lambda: self.run_on_active('copy_listing'),
+        )
+        self.copy_button.pack(side=tk.LEFT)
 
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
 
         self.menubar = tk.Menu(root)
+        self.file_menu = tk.Menu(self.menubar, tearoff=0)
+        self.file_menu.add_command(
+            label=TRANSLATIONS['de']['menu_new'], command=self.add_tab
+        )
+        self.file_menu.add_command(
+            label=TRANSLATIONS['de']['menu_open'], command=self.open_file
+        )
+        self.file_menu.add_command(
+            label=TRANSLATIONS['de']['menu_save'],
+            command=lambda: self.run_on_active('save_file'),
+        )
+        self.file_menu.add_separator()
+        self.file_menu.add_command(
+            label=TRANSLATIONS['de']['menu_exit'], command=self.on_close
+        )
+        self.menubar.add_cascade(
+            label=TRANSLATIONS['de']['menu_file'], menu=self.file_menu
+        )
         self.menubar.add_command(
             label=TRANSLATIONS['de']['menu_settings'],
             command=self.open_settings,
@@ -2310,14 +2630,85 @@ class TabbedProductGeneratorGUI:
         root.config(menu=self.menubar)
         self.notebook.bind('<<NotebookTabChanged>>', self.on_tab_changed)
         self.settings_window = None
-        self.add_tab()
+        if not self.restore_session():
+            self.add_tab()
+        self.root.after(2000, self.autosave_session)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def update_chrome_language(self, language):
         trans = TRANSLATIONS.get(language, TRANSLATIONS['de'])
         self.root.title(trans['title'])
         self.new_tab_button.config(text=trans['new_tab'])
         self.close_tab_button.config(text=trans['close_tab'])
-        self.menubar.entryconfig(0, label=trans['menu_settings'])
+        self.export_button.config(text=trans['export_button'])
+        self.copy_button.config(text=trans['copy_button'])
+        self.file_menu.entryconfig(0, label=trans['menu_new'])
+        self.file_menu.entryconfig(1, label=trans['menu_open'])
+        self.file_menu.entryconfig(2, label=trans['menu_save'])
+        self.file_menu.entryconfig(4, label=trans['menu_exit'])
+        self.menubar.entryconfig(0, label=trans['menu_file'])
+        self.menubar.entryconfig(1, label=trans['menu_settings'])
+
+    def open_file(self):
+        """Öffnet einen vorhandenen TXT-Beitrag in einem eigenen Tab."""
+        controller = self.active_controller()
+        language = controller.language if controller else 'de'
+        trans = TRANSLATIONS[language]
+        filename = filedialog.askopenfilename(
+            title=trans['open_file_title'],
+            filetypes=[
+                ("Textdateien", "*.txt"),
+                ("Alle Dateien", "*.*"),
+            ],
+        )
+        if not filename:
+            return
+        try:
+            text = Path(filename).read_text(encoding='utf-8-sig')
+        except UnicodeDecodeError:
+            text = Path(filename).read_text(encoding='cp1252')
+        except Exception as exc:
+            messagebox.showerror(trans['open_file_title'], str(exc))
+            return
+
+        # Der Pflichttext wird in der Live-Vorschau separat dargestellt.
+        marker = text.find(WARRANTY_CLAUSE)
+        if marker >= 0:
+            text = text[:marker]
+        text = re.sub(r'\s*---\s*$', '', text.rstrip()).rstrip()
+
+        controller = self.add_tab()
+        product_name = Path(filename).stem
+        controller.opened_file_path = str(Path(filename))
+        controller.search_var.set(product_name)
+        if controller._search_after_id is not None:
+            controller.root.after_cancel(controller._search_after_id)
+            controller._search_after_id = None
+        controller._search_generation += 1
+        variant = {
+            'name': product_name,
+            'description': {'de': text, 'en': text},
+            'source_url': '',
+            'sources': ['Datei'],
+            'quality': 'exakt',
+        }
+        controller.selected_variant = variant
+        controller.search_results = [{
+            'group_id': 'file',
+            'variant': variant,
+        }]
+        controller.variant_listbox.delete(0, tk.END)
+        controller.variant_listbox.insert(
+            tk.END, controller.result_display_label(
+                controller.search_results[0]
+            )
+        )
+        controller.variant_listbox.selection_set(0)
+        controller.preview_text.delete('1.0', tk.END)
+        controller.preview_text.insert('1.0', text)
+        controller.render_live_preview()
+        if controller.title_callback:
+            controller.title_callback(product_name)
 
     def open_settings(self):
         """Zeigt die Konfiguration des aktiven Beitrags separat an."""
@@ -2435,9 +2826,30 @@ class TabbedProductGeneratorGUI:
         """Speichert nur die Konfiguration, niemals einen Verkaufsbeitrag."""
         controller.on_font_size_changed()
         controller.save_config()
-        controller.status_var.set(
-            TRANSLATIONS[controller.language]['settings_saved']
-        )
+        settings = {
+            'language': controller.language,
+            'font_size': controller.font_size,
+            'save_path': controller.save_path,
+            'providers': {
+                name: bool(variable.get())
+                for name, variable in controller.provider_vars.items()
+            },
+        }
+        for other in self.controllers.values():
+            other.save_path = settings['save_path']
+            other.path_label.config(text=other.save_path)
+            for name, enabled in settings['providers'].items():
+                if name in other.provider_vars:
+                    other.provider_vars[name].set(enabled)
+            other.font_size_var.set(settings['font_size'])
+            other.on_font_size_changed()
+            if other.language != settings['language']:
+                other.language_var.set(settings['language'])
+                other.on_language_changed(settings['language'])
+            other.save_config()
+            other.status_var.set(
+                TRANSLATIONS[other.language]['settings_saved']
+            )
         if window.winfo_exists():
             window.destroy()
 
@@ -2460,6 +2872,87 @@ class TabbedProductGeneratorGUI:
     def active_controller(self):
         selected = self.notebook.select()
         return self.controllers.get(selected)
+
+    def serialize_session(self):
+        tabs = []
+        for tab_id in self.notebook.tabs():
+            controller = self.controllers.get(tab_id)
+            if not controller:
+                continue
+            tabs.append({
+                'query': controller.search_var.get().strip(),
+                'variant': controller.selected_variant,
+                'draft': controller.preview_text.get(
+                    '1.0', tk.END
+                ).rstrip(),
+                'language': controller.language,
+                'opened_file_path': controller.opened_file_path,
+            })
+        return {
+            'active': self.notebook.index(self.notebook.select())
+            if self.notebook.tabs() else 0,
+            'tabs': tabs,
+        }
+
+    def save_session(self):
+        try:
+            data = self.serialize_session()
+            temporary = self.session_file.with_suffix('.tmp')
+            with open(temporary, 'w', encoding='utf-8') as handle:
+                json.dump(data, handle, ensure_ascii=False, indent=2)
+            os.replace(temporary, self.session_file)
+        except Exception:
+            pass
+
+    def autosave_session(self):
+        if not self.root.winfo_exists():
+            return
+        self.save_session()
+        self.root.after(2000, self.autosave_session)
+
+    def restore_session(self):
+        try:
+            with open(self.session_file, 'r', encoding='utf-8') as handle:
+                data = json.load(handle)
+        except Exception:
+            return False
+        tabs = data.get('tabs') or []
+        if not tabs:
+            return False
+        for saved in tabs:
+            controller = self.add_tab()
+            controller.opened_file_path = saved.get('opened_file_path')
+            language = saved.get('language')
+            if language in TRANSLATIONS and language != controller.language:
+                controller.language_var.set(language)
+                controller.on_language_changed(language)
+            query = str(saved.get('query') or '')
+            controller.search_var.set(query)
+            if controller._search_after_id is not None:
+                controller.root.after_cancel(controller._search_after_id)
+                controller._search_after_id = None
+            controller._search_generation += 1
+            variant = saved.get('variant')
+            if isinstance(variant, dict) and variant.get('name'):
+                controller.selected_variant = variant
+                controller.search_results = [{
+                    'group_id': 'restored',
+                    'variant': variant,
+                }]
+                controller.variant_listbox.delete(0, tk.END)
+                controller.variant_listbox.insert(tk.END, variant['name'])
+                controller.variant_listbox.selection_set(0)
+            draft = str(saved.get('draft') or '')
+            controller.preview_text.delete('1.0', tk.END)
+            controller.preview_text.insert('1.0', draft)
+            controller.render_live_preview()
+        active = min(max(int(data.get('active', 0)), 0), len(tabs) - 1)
+        self.notebook.select(self.notebook.tabs()[active])
+        return True
+
+    def on_close(self):
+        self.save_session()
+        self.root.destroy()
 
     def add_tab(self):
         self.tab_counter += 1

@@ -18,6 +18,9 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 ✅ **ISBN-10/ISBN-13**: Deutsche Buchdaten über die Deutsche Nationalbibliothek  
 ✅ **Geteilte Bearbeitung**: Editor und formatierte Live-Vorschau nebeneinander  
 ✅ **Produktcover**: Bild der ausgewählten Produktseite wird automatisch geladen  
+✅ **Quellen & Qualität**: Treffer zeigen Herkunft und geschätzte Übereinstimmung
+✅ **Sitzungswiederherstellung**: Offene Tabs und Entwürfe werden automatisch gesichert
+✅ **Buchkataloge**: ISBN-Metadaten zusätzlich über Open Library und Google Books
 
 ## Installation
 
@@ -40,8 +43,8 @@ python product_generator_gui.py
 1. **Produktname eingeben** → Echtzeit-Suche lädt Varianten
 2. **Variante auswählen** → Live-Vorschau erscheint
 3. **Beschreibung prüfen und bei Bedarf bearbeiten**
-4. **Speicherpfad wählen** (optional) → Dialog "📁 Speicherpfad ändern"
-5. **Speichern** → Button "💾 Speichern"
+4. **Einstellungen** bei Bedarf über die obere Menüleiste öffnen
+5. **Beitrag speichern** oder **Beitrag kopieren** in der oberen Werkzeugleiste
 
 → **Textdatei wird erstellt im gewählten Ordner!**
 
@@ -98,10 +101,9 @@ Kurzbeschreibungen. Sie eignet sich besonders für bekannte Produktreihen, erset
 aber keine technischen Herstellerdaten.
 
 ISBN-10 und ISBN-13 werden auch mit Bindestrichen erkannt, validiert und
-gegenseitig umgerechnet. Für deutsche Bücher fragt das Tool die öffentliche
-SRU-Schnittstelle der Deutschen Nationalbibliothek ab und übernimmt Titel,
-Autor, Ausgabe, Verlag, Erscheinungsdatum, Umfang und beide ISBN-Formen. Ein im
-Datensatz hinterlegter Verlagslink wird zusätzlich für das Buchcover verwendet.
+gegenseitig umgerechnet. Für Bücher fragt das Tool die Deutsche
+Nationalbibliothek, Open Library, Google Books und als Fallback ZVAB ab.
+Identische Titel werden zusammengeführt und ihre Quellen gemeinsam angezeigt.
 
 Amazon.de, Geizhals und Idealo sind experimentelle HTML-Provider. Amazon liefert
 Suchtreffer und – soweit zugänglich – Stichpunkte und technische Fakten der
@@ -121,8 +123,7 @@ Text anhand der mitgespeicherten Quelle geprüft werden.
 
 ## Geplante Features
 
-- 🔄 Hersteller-Connectoren und strukturierte Produktdaten
-- 🌐 Sprachen-Auswahl (Deutsch/Englisch)
+- 🔄 Weitere Hersteller-Connectoren und strukturierte Produktdaten
 - 🔗 eBay/Kleinanzeigen-API Integration
 - 📝 Custom Template-System
 - 💾 CSV-Import für Massendaten

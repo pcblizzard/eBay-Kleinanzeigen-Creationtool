@@ -8,6 +8,13 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 
 - Die Einstellungen wurden vollständig aus den Beitrags-Tabs entfernt und
   sind über das obere Menü in einem eigenen Dialog erreichbar.
+- Sprache, Schriftgröße, Speicherpfad und Provider-Auswahl werden auf alle
+  geöffneten Tabs angewendet.
+- „Beitrag speichern“ und „Beitrag kopieren“ sind dauerhaft in der oberen
+  Werkzeugleiste erreichbar.
+- Ein neues Datei-Menü bietet Neu, Öffnen, Speichern und Beenden. Geöffnete
+  TXT-Beiträge werden in einem eigenen Tab bearbeitet und beim Speichern
+  gezielt aktualisiert.
 - Ein Sprachwechsel erzeugt den aktuellen Verkaufsentwurf neu und übersetzt
   Oberfläche, Vorlagen sowie bekannte strukturierte Metadatenfelder.
 - Der verbindliche deutsche Privatverkaufstext bleibt unabhängig von der
@@ -24,6 +31,17 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 - Die Live-Vorschau kompiliert auch unter Python 3.10.
 - Unabhängig veröffentlichte Bücher erhalten einen exakten ISBN-Fallback über ZVAB.
 - ISBN-basierte AbeBooks-/ZVAB-Cover werden unterstützt.
+
+### Hinzugefügt
+
+- Automatische Sicherung und Wiederherstellung geöffneter Tabs und Entwürfe.
+- Trefferkennzeichnung mit Quelle und geschätzter Übereinstimmungsqualität.
+- Zusammenführung identischer Produkttitel mit gemeinsamer Quellenanzeige.
+- Zeitlich begrenzter Suchcache zur Vermeidung identischer Netzwerkanfragen.
+- Strukturierte ISBN-Suche über Open Library und Google Books ohne
+  erforderlichen API-Schlüssel.
+- Amazon-Produktbilder werden aus `landingImage`, `data-old-hires` und
+  `data-a-dynamic-image` gelesen; hochauflösende Varianten haben Vorrang.
 
 ## [0.2.0] - 2026-07-27
 

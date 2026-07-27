@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 import unicodedata
@@ -298,6 +299,33 @@ class OnlineProviderTests(unittest.TestCase):
         )
         self.assertEqual(url, "https://images.example.test/cover.jpg")
 
+    def test_amazon_landing_image_prefers_high_resolution_url(self):
+        html = """
+        <img alt="Blu-ray"
+             src="https://m.media-amazon.com/images/I/51L3D0GdqXL.jpg"
+             data-old-hires="https://m.media-amazon.com/images/I/91HkT3V28EL.*SL1500*.jpg"
+             id="landingImage">
+        """
+        url = ProductGeneratorGUI.extract_product_image_url(
+            html, "https://www.amazon.de/gp/product/B002UCREGO"
+        )
+        self.assertEqual(
+            url,
+            "https://m.media-amazon.com/images/I/91HkT3V28EL._SL1500_.jpg",
+        )
+
+    def test_amazon_dynamic_image_uses_largest_available_variant(self):
+        html = """
+        <img id="landingImage" data-a-dynamic-image="{
+          &quot;https://m.media-amazon.com/images/I/book.*SY342*.jpg&quot;:[342,208],
+          &quot;https://m.media-amazon.com/images/I/book.*SY522*.jpg&quot;:[522,318]
+        }">
+        """
+        url = ProductGeneratorGUI.extract_product_image_url(
+            html, "https://www.amazon.de/dp/B07QV2QMT3"
+        )
+        self.assertIn("SY522", url)
+
     def test_penguin_book_cover_markup_is_supported(self):
         html = """
         <img src="/resource/responsive-image/4503010/220/7/book.jpg.webp"
@@ -466,6 +494,66 @@ class OnlineProviderTests(unittest.TestCase):
         self.assertIn("Please remove or complete", draft)
         self.assertNotIn("### Buchdetails", draft)
         self.assertNotIn("Nicht Zutreffendes", draft)
+
+    def test_open_library_isbn_returns_structured_book(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        response = json.dumps({
+            "docs": [{
+                "key": "/works/OL123W",
+                "title": "Beispielbuch",
+                "author_name": ["Erika Beispiel"],
+                "publisher": ["Testverlag"],
+                "first_publish_year": 2025,
+                "number_of_pages_median": 240,
+            }]
+        })
+        with patch.object(gui, "fetch_url", return_value=response):
+            results = gui.search_open_library("978-3442180653")
+        self.assertEqual(results[0][0], "Beispielbuch")
+        self.assertIn("Autor: Erika Beispiel", results[0][1])
+        self.assertIn("Anzahl der Seiten: 240", results[0][1])
+        self.assertEqual(
+            results[0][2], "https://openlibrary.org/works/OL123W"
+        )
+
+    def test_google_books_isbn_returns_structured_book(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        response = json.dumps({
+            "items": [{
+                "id": "book-id",
+                "volumeInfo": {
+                    "title": "Beispielbuch",
+                    "subtitle": "Ein Test",
+                    "authors": ["Erika Beispiel"],
+                    "publisher": "Testverlag",
+                    "publishedDate": "2025",
+                    "pageCount": 240,
+                    "language": "de",
+                    "infoLink": "https://books.google.test/book-id",
+                },
+            }]
+        })
+        with patch.object(gui, "fetch_url", return_value=response):
+            results = gui.search_google_books("9783442180653")
+        self.assertEqual(results[0][0], "Beispielbuch: Ein Test")
+        self.assertIn("Verlag: Testverlag", results[0][1])
+        self.assertEqual(
+            results[0][2], "https://books.google.test/book-id"
+        )
+
+    def test_result_quality_prefers_exact_titles_and_identifiers(self):
+        self.assertEqual(
+            ProductGeneratorGUI.match_quality(
+                "Samsung Galaxy S23", "Samsung Galaxy S23"
+            ),
+            "exakt",
+        )
+        self.assertEqual(
+            ProductGeneratorGUI.match_quality(
+                "978-3442180653", "Die LET THEM Theorie"
+            ),
+            "exakt",
+        )
 
 
 if __name__ == "__main__":
