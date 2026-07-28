@@ -1685,7 +1685,14 @@ class LegalClauseMigrationTests(unittest.TestCase):
             )
 
     def test_the_default_carries_the_mandatory_carve_outs(self):
-        """Ausschluesse, die das Gesetz ohnehin nicht zulaesst, benennen."""
+        """Ausschluesse, die das Gesetz ohnehin nicht zulaesst, benennen.
+
+        Arglistiges Verschweigen ist zwar vorsaetzliches Handeln und damit
+        bereits erfasst; es wird trotzdem ausdruecklich genannt, weil ein
+        vielfach verwendeter Textbaustein als vorformulierte Bedingung gelten
+        kann und dann die Transparenz zaehlt.
+        """
+        self.assertIn("arglistig verschwiegener Mängel", WARRANTY_CLAUSE)
         self.assertIn("Vorsatz", WARRANTY_CLAUSE)
         self.assertIn("grobe Fahrlässigkeit", WARRANTY_CLAUSE)
         self.assertIn("Leben, Körper oder Gesundheit", WARRANTY_CLAUSE)

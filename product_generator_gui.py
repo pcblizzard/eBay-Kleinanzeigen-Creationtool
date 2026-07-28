@@ -61,7 +61,7 @@ except ImportError:
 
 # Konstante für die Gewährleistungsklausel
 WARRANTY_CLAUSE = """Privatverkauf, keine Gewährleistung, keine Garantie, keine Rücknahme.
-Verkauf von privat unter Ausschluss der Sachmängelhaftung. Die Haftung für Vorsatz, grobe Fahrlässigkeit sowie für Schäden aus Verletzung von Leben, Körper oder Gesundheit bleibt unberührt."""
+Verkauf von privat unter Ausschluss der Sachmängelhaftung. Die Haftung für Vorsatz einschließlich arglistig verschwiegener Mängel, für grobe Fahrlässigkeit sowie für Schäden aus Verletzung von Leben, Körper oder Gesundheit bleibt unberührt."""
 
 # Frühere Vorgaben des Pflichttextes. Wer ihn nie geändert hat, trägt die
 # damalige Fassung in seiner Konfiguration und bekäme sonst die Verbesserung
@@ -78,6 +78,10 @@ SUPERSEDED_CLAUSES = (
     "für Vorsatz, grobe Fahrlässigkeit sowie für Schäden aus Verletzung von "
     "Leben, Körper oder Gesundheit bleibt unberührt. Keine Rücknahme, keine "
     "Garantie.",
+    "Privatverkauf, keine Gewährleistung, keine Garantie, keine Rücknahme.\n"
+    "Verkauf von privat unter Ausschluss der Sachmängelhaftung. Die Haftung "
+    "für Vorsatz, grobe Fahrlässigkeit sowie für Schäden aus Verletzung von "
+    "Leben, Körper oder Gesundheit bleibt unberührt.",
 )
 
 MODULE_DIR = Path(__file__).resolve().parent
