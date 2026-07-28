@@ -1,5 +1,6 @@
 import json
 import tempfile
+import tkinter as tk
 import unittest
 import unicodedata
 from types import SimpleNamespace
@@ -48,6 +49,105 @@ class ProductGeneratorTests(unittest.TestCase):
         listing = self.platform_description("Beschreibung", legal_clause=custom)
         self.assertTrue(listing.rstrip().endswith(custom))
         self.assertNotIn(WARRANTY_CLAUSE, listing)
+
+    @staticmethod
+    def assistant(language='de', price_type='VB'):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        gui.language = language
+        gui.price_type_var = SimpleNamespace(get=lambda: price_type)
+        return gui
+
+    def draft_body(self, language='de'):
+        return ProductGeneratorGUI.platform_body_from_draft(
+            ProductGenerator.build_sales_draft(
+                "Fantec QB-X2US3R", "Marke: Fantec", language
+            )
+        )
+
+    def test_assistant_details_replace_the_generated_placeholders(self):
+        gui = self.assistant()
+        merged = gui.merge_assistant_details(
+            self.draft_body(), "Neu",
+            ProductGeneratorGUI.scope_items("Gehäuse, Originalverpackung"),
+            gui.assistant_price_text(50.0),
+        )
+        # Der Zustand steht konkret da, die Auswahlsaetze sind weg.
+        self.assertIn("### Zustand\n\nNeu", merged)
+        self.assertNotIn("**[sehr gutem", merged)
+        self.assertNotIn("Normale Gebrauchsspuren", merged)
+        self.assertNotIn("Nicht Zutreffendes", merged)
+        # Der Lieferumfang steht genau einmal, als Stichpunkte.
+        self.assertEqual(merged.count("### Lieferumfang"), 1)
+        self.assertIn("* Gehäuse\n* Originalverpackung", merged)
+        self.assertNotIn("[Ladekabel / Netzteil]", merged)
+        # Kein zusaetzlicher Sammelabschnitt mehr.
+        self.assertNotIn("Angaben zum angebotenen Artikel", merged)
+        self.assertTrue(merged.rstrip().endswith("Bei Fragen einfach melden."))
+
+    def test_applying_the_assistant_twice_changes_nothing(self):
+        gui = self.assistant()
+        items = ProductGeneratorGUI.scope_items("Gehäuse, Originalverpackung")
+        price = gui.assistant_price_text(50.0)
+        once = gui.merge_assistant_details(
+            self.draft_body(), "Neu", items, price
+        )
+        twice = gui.merge_assistant_details(once, "Neu", items, price)
+        self.assertEqual(once, twice)
+
+    def test_placeholders_stay_while_no_condition_is_chosen(self):
+        merged = self.assistant().merge_assistant_details(
+            self.draft_body(), "", [], ""
+        )
+        self.assertIn("**[sehr gutem", merged)
+        self.assertIn("Nicht Zutreffendes", merged)
+
+    def test_price_carries_the_kleinanzeigen_price_type(self):
+        self.assertEqual(
+            self.assistant(price_type='VB').assistant_price_text(50.0),
+            "50,00 € VB",
+        )
+        self.assertEqual(
+            self.assistant(price_type='Festpreis').assistant_price_text(1234.5),
+            "1.234,50 € Festpreis",
+        )
+        # "Zu verschenken" ersetzt den Betrag, statt ihn zu ergaenzen.
+        self.assertEqual(
+            self.assistant(price_type='Zu verschenken')
+            .assistant_price_text(50.0),
+            "Zu verschenken",
+        )
+        self.assertEqual(
+            self.assistant('en', 'Negotiable').assistant_price_text(1234.5),
+            "1,234.50 € Negotiable",
+        )
+
+    def test_menubar_entries_start_at_index_zero(self):
+        """Ein Tearoff-Eintrag wuerde alle Menue-Indizes verschieben.
+
+        Unter Windows legt Tk ihn ohne ``tearoff=0`` auf Index 0; jedes
+        ``entryconfig(0, label=…)`` beim Sprachwechsel bricht dann ab.
+        """
+        root = tk.Tk()
+        try:
+            root.withdraw()
+            menubar = tk.Menu(root, tearoff=0)
+            menubar.add_cascade(
+                label="Datei", menu=tk.Menu(menubar, tearoff=0)
+            )
+            root.config(menu=menubar)
+            self.assertEqual(menubar.type(0), 'cascade')
+            menubar.entryconfig(0, label="File")
+        finally:
+            root.destroy()
+
+    def test_scope_input_becomes_separate_items(self):
+        items = ProductGeneratorGUI.scope_items
+        self.assertEqual(
+            items("Gehäuse, [Originalverpackung]; Kabel\nNetzteil"),
+            ["Gehäuse", "Originalverpackung", "Kabel", "Netzteil"],
+        )
+        self.assertEqual(items("* Nur Gehäuse"), ["Nur Gehäuse"])
+        self.assertEqual(items(""), [])
 
     def test_german_and_english_price_notations_are_parsed(self):
         parse = ProductGeneratorGUI.parse_price

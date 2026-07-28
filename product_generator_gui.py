@@ -214,6 +214,11 @@ TRANSLATIONS = {
         ),
         "scope_label": "Lieferumfang:",
         "asking_price_label": "Wunschpreis (€):",
+        # Bei Kleinanzeigen ueblich: Verhandlungsbasis oder Festpreis.
+        "price_type_values": "VB|Festpreis|Zu verschenken",
+        "section_condition": "Zustand",
+        "section_scope": "Lieferumfang",
+        "section_price": "Preisvorstellung",
         "price_basis_label": "Preisgrundlage:",
         "price_active": "Aktive Vergleichsangebote",
         "price_sold": "Tatsächlich verkaufte Angebote",
@@ -363,6 +368,10 @@ TRANSLATIONS = {
         ),
         "scope_label": "Included items:",
         "asking_price_label": "Asking price (€):",
+        "price_type_values": "Negotiable|Fixed price|Free to a good home",
+        "section_condition": "Condition",
+        "section_scope": "Included",
+        "section_price": "Asking price",
         "price_basis_label": "Price basis:",
         "price_active": "Active comparison listings",
         "price_sold": "Actually sold listings",
@@ -871,7 +880,9 @@ class ProductGeneratorGUI:
 
     def create_menu(self):
         trans = TRANSLATIONS[self.language]
-        self.menubar = tk.Menu(self.root)
+        # Ohne tearoff=0 liegt unter Windows ein unsichtbarer Tearoff-Eintrag
+        # auf Index 0; jedes entryconfig(0, label=…) scheitert dann.
+        self.menubar = tk.Menu(self.root, tearoff=0)
         self.settings_menu = tk.Menu(self.menubar, tearoff=0)
         self.settings_menu.add_command(
             label=trans['menu_change_save_path'],
@@ -1135,11 +1146,14 @@ class ProductGeneratorGUI:
         )
         self.scope_var = tk.StringVar()
         self.asking_price_var = tk.StringVar()
+        self.price_type_var = tk.StringVar(
+            value=trans['price_type_values'].split('|')[0]
+        )
         self.price_basis_var = tk.StringVar(value='active')
         self.price_basis_display_var = tk.StringVar(
             value=trans['price_active']
         )
-        for column in range(7):
+        for column in range(8):
             assistant_fields.columnconfigure(
                 column, weight=1 if column in (1, 3) else 0
             )
@@ -1168,6 +1182,14 @@ class ProductGeneratorGUI:
             assistant_fields, textvariable=self.asking_price_var, width=10
         )
         self.asking_price_entry.grid(row=0, column=5, sticky=tk.W)
+        self.price_type_combo = ttk.Combobox(
+            assistant_fields,
+            textvariable=self.price_type_var,
+            values=trans['price_type_values'].split('|'),
+            state='readonly',
+            width=14,
+        )
+        self.price_type_combo.grid(row=0, column=6, sticky=tk.W, padx=(4, 0))
         self.price_basis_combo = ttk.Combobox(
             assistant_fields,
             textvariable=self.price_basis_display_var,
@@ -1175,7 +1197,7 @@ class ProductGeneratorGUI:
             state='readonly',
             width=8,
         )
-        self.price_basis_combo.grid(row=0, column=6, sticky=tk.E, padx=(8, 0))
+        self.price_basis_combo.grid(row=0, column=7, sticky=tk.E, padx=(8, 0))
 
         assistant_actions = ttk.Frame(self.assistant_frame)
         assistant_actions.pack(fill=tk.X, pady=(6, 0))
@@ -1828,6 +1850,13 @@ class ProductGeneratorGUI:
                     or stored_state.get('asking_price', '')
                 )
             )
+            self.price_type_var.set(
+                variant.get('price_type')
+                or stored_state.get('price_type')
+                or TRANSLATIONS[self.language][
+                    'price_type_values'
+                ].split('|')[0]
+            )
             self.price_basis_var.set(
                 stored_state.get('price_basis', 'active')
             )
@@ -2032,6 +2061,94 @@ class ProductGeneratorGUI:
             '.', ','
         ).replace('\x00', '.')
 
+    @staticmethod
+    def scope_items(scope):
+        """Zerlegt eine Lieferumfangs-Eingabe in einzelne Stichpunkte."""
+        parts = re.split(r'[;\n]|,(?![^(]*\))', str(scope or ''))
+        items = []
+        for part in parts:
+            clean = part.strip().strip('*•- ').strip()
+            clean = re.sub(r'^\[(.*)\]$', r'\1', clean).strip()
+            if clean and clean not in items:
+                items.append(clean)
+        return items
+
+    @staticmethod
+    def section_body(body, *titles):
+        """Findet einen ``### Titel``-Abschnitt samt seinem Inhalt."""
+        names = '|'.join(re.escape(title) for title in titles)
+        return re.compile(
+            rf'(?m)^###[ \t]+(?:{names})[ \t]*$\n(?P<content>.*?)'
+            r'(?=^###[ \t]|\Z)',
+            re.DOTALL,
+        ).search(body)
+
+    @classmethod
+    def replace_section(cls, body, titles, content):
+        """Ersetzt den Inhalt eines Abschnitts; ``None`` wenn er fehlt."""
+        match = cls.section_body(body, *titles)
+        if not match:
+            return None
+        replacement = f"### {titles[0]}\n\n{content.strip()}\n\n"
+        return body[:match.start()] + replacement + body[match.end():]
+
+    @classmethod
+    def drop_section(cls, body, *titles):
+        match = cls.section_body(body, *titles)
+        if not match:
+            return body
+        return body[:match.start()] + body[match.end():]
+
+    @staticmethod
+    def strip_condition_placeholders(body):
+        """Entfernt die Auswahlsätze zum Zustand.
+
+        Sobald der Zustand konkret angegeben ist, stehen sie doppelt im Text.
+        Erkennbar sind sie am fett gesetzten ``**[…]``; die eckigen Klammern
+        im Lieferumfang sind bewusst nicht fett und bleiben erhalten.
+        """
+        paragraphs = re.split(r'\n\s*\n', body)
+        return '\n\n'.join(
+            paragraph for paragraph in paragraphs if '**[' not in paragraph
+        )
+
+    @staticmethod
+    def strip_review_hint(body):
+        """Nimmt den Prüfhinweis weg, wenn keine Platzhalter mehr da sind."""
+        if '[' in re.sub(r'^\s*\*\(.*?\)\*\s*$', '', body, flags=re.M):
+            return body
+        return re.sub(
+            r'(?m)^\s*\*\((?:Nicht Zutreffendes|Please remove)[^\n]*\)\*\s*$\n?',
+            '', body,
+        )
+
+    @staticmethod
+    def split_closing(body):
+        """Trennt den Schlusssatz ab, damit er nicht in einen Abschnitt rutscht.
+
+        Ohne diese Trennung wuerde der letzte ``###``-Abschnitt den Satz beim
+        naechsten Uebernehmen mitverschlucken.
+        """
+        match = re.search(
+            r'\n\s*\n((?:Bei Fragen|Feel free)[^\n]*)\s*$', body
+        )
+        if match:
+            return body[:match.start()].rstrip(), match.group(1).strip()
+        return body.rstrip(), ''
+
+    def assistant_price_text(self, amount):
+        """Formatiert den Preis inklusive VB- beziehungsweise Festpreis-Zusatz."""
+        price_type = self.price_type_var.get().strip()
+        free = TRANSLATIONS[self.language]['price_type_values'].split('|')[2]
+        if price_type == free:
+            return price_type
+        suffix = f" {price_type}" if price_type else ''
+        formatted = (
+            f"{amount:,.2f}" if self.language == 'en'
+            else self.format_price(amount)
+        )
+        return f"{formatted} €{suffix}"
+
     def apply_assistant_details(self):
         if not self.selected_variant or not self.product_record_id:
             return
@@ -2039,19 +2156,11 @@ class ProductGeneratorGUI:
         trans = TRANSLATIONS[self.language]
         unselected = trans['condition_values'].split('|')[0]
         condition = self.condition_var.get().strip()
+        if condition == unselected:
+            condition = ''
         scope = self.scope_var.get().strip()
         price = self.asking_price_var.get().strip()
-        lines = []
-        if condition and condition != unselected:
-            lines.append(
-                f"* {'Zustand' if self.language == 'de' else 'Condition'}: "
-                f"{condition}"
-            )
-        if scope:
-            lines.append(
-                f"* {'Lieferumfang' if self.language == 'de' else 'Included'}: "
-                f"{scope}"
-            )
+        price_text = ''
         if price:
             amount = self.parse_price(price)
             if amount is None:
@@ -2060,46 +2169,88 @@ class ProductGeneratorGUI:
                     trans['asking_price_label'],
                 )
                 return
-            lines.append(
-                f"* {'Preisvorstellung' if self.language == 'de' else 'Asking price'}: "
-                f"{self.format_price(amount)} €"
-            )
-        heading = (
-            '### Angaben zum angebotenen Artikel'
-            if self.language == 'de'
-            else '### Details of the offered item'
-        )
-        pattern = (
-            r'\n*### (?:Angaben zum angebotenen Artikel|'
-            r'Details of the offered item)\n.*?(?=\n### |\Z)'
-        )
+            price_text = self.assistant_price_text(amount)
+
+        items = self.scope_items(scope)
         for platform, draft in self.platform_drafts.items():
-            body = re.sub(
-                pattern, '', draft['description'],
-                flags=re.DOTALL,
-            ).rstrip()
-            if lines:
-                body += f"\n\n{heading}\n\n" + '\n'.join(lines)
+            body = self.merge_assistant_details(
+                draft['description'], condition, items, price_text
+            )
             if platform == 'ebay_mobile':
                 body = self.mobile_draft(body)
             draft['description'] = body
             self.persist_platform_draft(platform, draft)
-        self.selected_variant['listing_condition'] = (
-            '' if condition == unselected else condition
-        )
+        self.selected_variant['listing_condition'] = condition
         self.selected_variant['listing_scope'] = scope
         self.selected_variant['asking_price'] = price
+        self.selected_variant['price_type'] = self.price_type_var.get()
         self.listing_store.update_product_state(
             self.product_record_id,
             {
-                'condition': self.selected_variant['listing_condition'],
+                'condition': condition,
                 'scope': scope,
                 'asking_price': price,
+                'price_type': self.price_type_var.get(),
                 'price_basis': self.price_basis_var.get(),
             },
         )
         self.load_platform_draft(self.current_platform)
         self.update_listing_completeness()
+
+    def merge_assistant_details(self, body, condition, items, price_text):
+        """Führt Assistenten-Angaben in die vorhandenen Abschnitte ein.
+
+        Die Angaben landen bewusst nicht in einem eigenen Anhang: Zustand und
+        Lieferumfang stehen bereits als Abschnitt im Entwurf und waeren sonst
+        doppelt vorhanden.
+        """
+        trans = TRANSLATIONS[self.language]
+        both = (TRANSLATIONS['de'], TRANSLATIONS['en'])
+        condition_titles = [text['section_condition'] for text in both]
+        scope_titles = [text['section_scope'] for text in both]
+        price_titles = [text['section_price'] for text in both]
+        # Frueher wurden alle Angaben an einen eigenen Abschnitt gehaengt;
+        # bestehende Entwuerfe werden davon befreit.
+        body = self.drop_section(
+            body,
+            'Angaben zum angebotenen Artikel',
+            'Details of the offered item',
+        )
+        body, closing = self.split_closing(body)
+
+        def apply_section(text, key, titles, content):
+            updated = self.replace_section(
+                text, [trans[key]] + titles, content
+            )
+            if updated is not None:
+                return updated
+            return f"{text.rstrip()}\n\n### {trans[key]}\n\n{content}"
+
+        if condition:
+            body = self.strip_condition_placeholders(body)
+            body = apply_section(
+                body, 'section_condition', condition_titles, condition
+            )
+        else:
+            body = self.drop_section(body, *condition_titles)
+
+        if items:
+            body = apply_section(
+                body, 'section_scope', scope_titles,
+                '\n'.join(f"* {item}" for item in items),
+            )
+
+        if price_text:
+            body = apply_section(
+                body, 'section_price', price_titles, price_text
+            )
+        else:
+            body = self.drop_section(body, *price_titles)
+
+        body = self.strip_review_hint(body)
+        if closing:
+            body = f"{body.rstrip()}\n\n{closing}"
+        return re.sub(r'\n{3,}', '\n\n', body).strip()
 
     def persist_platform_draft(self, platform, draft):
         self.listing_store.save_draft(
@@ -2969,9 +3120,10 @@ class ProductGeneratorGUI:
 
     def on_language_changed(self, value):
         if value in TRANSLATIONS:
+            previous_language = self.language
             self.language = value
             self.save_config()
-            self.update_ui_language()
+            self.update_ui_language(previous_language)
             if self.language_callback:
                 self.language_callback(value)
             if self.selected_variant is not None:
@@ -3003,8 +3155,9 @@ class ProductGeneratorGUI:
         self.legal_text.config(state=tk.DISABLED)
         self.render_live_preview()
 
-    def update_ui_language(self):
+    def update_ui_language(self, previous_language=None):
         trans = TRANSLATIONS[self.language]
+        previous_language = previous_language or self.language
         if not self.embedded:
             self.root.title(trans['title'])
         self.search_frame.config(text=trans['search_frame'])
@@ -3028,6 +3181,17 @@ class ProductGeneratorGUI:
         self.fact_conflicts_button.config(text=trans['fact_conflicts'])
         self.condition_combo.configure(
             values=trans['condition_values'].split('|')
+        )
+        # Die gewaehlte Preisart wandert positionsgleich in die neue Sprache.
+        previous_types = TRANSLATIONS[
+            previous_language
+        ]['price_type_values'].split('|')
+        price_types = trans['price_type_values'].split('|')
+        current_type = self.price_type_var.get()
+        self.price_type_combo.configure(values=price_types)
+        self.price_type_var.set(
+            price_types[previous_types.index(current_type)]
+            if current_type in previous_types else price_types[0]
         )
         self.price_basis_combo.configure(
             values=(trans['price_active'], trans['price_sold'])
@@ -5386,7 +5550,9 @@ class TabbedProductGeneratorGUI:
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
 
-        self.menubar = tk.Menu(root)
+        # tearoff=0: sonst verschiebt ein unsichtbarer Eintrag alle Indizes und
+        # update_chrome_language bricht mit TclError ab.
+        self.menubar = tk.Menu(root, tearoff=0)
         self.file_menu = tk.Menu(self.menubar, tearoff=0)
         self.file_menu.add_command(
             label=TRANSLATIONS['de']['menu_new'], command=self.add_tab
@@ -5972,6 +6138,7 @@ class TabbedProductGeneratorGUI:
                 'condition': controller.condition_var.get(),
                 'scope': controller.scope_var.get(),
                 'asking_price': controller.asking_price_var.get(),
+                'price_type': controller.price_type_var.get(),
                 'price_basis': controller.price_basis_var.get(),
             })
         return {
@@ -6082,6 +6249,12 @@ class TabbedProductGeneratorGUI:
                 controller.scope_var.set(str(saved.get('scope') or ''))
                 controller.asking_price_var.set(
                     str(saved.get('asking_price') or '')
+                )
+                controller.price_type_var.set(
+                    saved.get('price_type')
+                    or TRANSLATIONS[controller.language][
+                        'price_type_values'
+                    ].split('|')[0]
                 )
                 controller.price_basis_var.set(
                     saved.get('price_basis', 'active')
