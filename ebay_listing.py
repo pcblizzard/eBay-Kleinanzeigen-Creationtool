@@ -54,6 +54,7 @@ MARKETPLACE = "EBAY_DE"
 TRADING_SITE_ID = "77"          # Deutschland
 TRADING_COMPATIBILITY = "1193"
 DEFAULT_LOCATION_KEY = "creationtool-standort"
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 # Zustandswerte des Inserat-Assistenten auf die eBay-Aufzaehlung abgebildet.
 CONDITION_MAP = {
@@ -157,11 +158,15 @@ def consent_url(client_id: str, ru_name: str, environment: str = "production",
     return f"{ENVIRONMENTS[environment]['auth']}?{query}"
 
 
-def authorization_code(redirect_response: str) -> str:
+def authorization_code(redirect_response: str, expected_state: str = "") -> str:
     """Liest den Code aus der Adresse, auf die eBay weitergeleitet hat.
 
     Der Nutzer kopiert die vollstaendige Adresse aus der Adresszeile; der
     Code ist darin URL-kodiert enthalten.
+
+    Ist ``expected_state`` gesetzt, muss der zurueckgegebene Statuswert damit
+    uebereinstimmen. Andernfalls koennte eine untergeschobene Adresse das
+    Werkzeug an ein fremdes eBay-Konto binden.
     """
     text = str(redirect_response or "").strip()
     if not text:
@@ -173,6 +178,14 @@ def authorization_code(redirect_response: str) -> str:
             values.get("error_description", values["error"])[0]
         )
     code = values.get("code", [""])[0]
+    if expected_state and code:
+        returned = values.get("state", [""])[0]
+        if not secrets.compare_digest(returned, expected_state):
+            raise EbayError(
+                "Der Statuswert der Antwort passt nicht zur Anfrage. "
+                "Die Adresse stammt moeglicherweise nicht aus diesem Vorgang "
+                "- bitte den Zugriff erneut erteilen."
+            )
     # Wer nur den Code einfuegt, soll ebenfalls weiterkommen.
     return code or (text if "&" not in text and "?" not in text else "")
 
@@ -204,9 +217,14 @@ class EbayListingClient:
     def _read(self, request):
         try:
             with self._open(request) as response:
-                return response.status, response.read()
+                # Begrenzt gelesen: eine unerwartet riesige Antwort soll
+                # weder den Speicher fuellen noch den XML-Parser beschaeftigen.
+                body = response.read(MAX_RESPONSE_BYTES + 1)
+                if len(body) > MAX_RESPONSE_BYTES:
+                    raise EbayError("Antwort von eBay ist zu gross.")
+                return response.status, body
         except urllib.error.HTTPError as error:
-            body = error.read()
+            body = error.read(MAX_RESPONSE_BYTES)
             raise EbayError(self.describe_error(error.code, body)) from error
 
     @staticmethod

@@ -10,6 +10,7 @@ import io
 import hashlib
 import locale
 import os
+import secrets
 import shutil
 import sys
 import base64
@@ -70,6 +71,21 @@ PLATFORM_IMAGE_LIMITS = {
 OWN_IMAGE_MAX_EDGE = 2000
 OWN_IMAGE_MAX_BYTES = 12 * 1024 * 1024
 OWN_IMAGE_QUALITY = 88
+
+
+def restrict_to_owner(path):
+    """Beschränkt eine Datei auf den Eigentümer.
+
+    Konfiguration, Sitzung und Sicherheitsprotokoll enthalten zwar keine
+    Zugangsdaten, aber persönliche Angaben wie Postleitzahl und Entwürfe.
+    Ohne diesen Schritt entstehen sie unter Linux und macOS je nach umask
+    für alle lesbar.
+    """
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        # Unter Windows regeln das die Zugriffslisten des Benutzerprofils.
+        pass
 
 
 def user_data_dir():
@@ -1130,6 +1146,7 @@ class ProductGeneratorGUI:
             }
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
+            restrict_to_owner(self.config_file)
         except Exception:
             print(TRANSLATIONS['de']['config_save_error'])
 
@@ -1205,6 +1222,7 @@ class ProductGeneratorGUI:
         try:
             with open(path, 'a', encoding='utf-8') as handle:
                 handle.write(json.dumps(record, ensure_ascii=True) + '\n')
+            restrict_to_owner(path)
         except OSError:
             # Ein nicht schreibbares Protokoll darf die auslösende Aktion
             # (Verbindungstest, Secret-Löschung) nicht abbrechen.
@@ -5944,10 +5962,13 @@ class ProductGeneratorGUI:
             self.ebay_ru_name = runame_var.get().strip()
             self.save_config()
             try:
+                # Der Statuswert bindet die Antwort an genau diese Anfrage.
+                self._ebay_consent_state = secrets.token_urlsafe(16)
                 url = consent_url(
                     self.get_secret('ebay_client_id'),
                     self.ebay_ru_name,
                     self.ebay_environment,
+                    state=self._ebay_consent_state,
                 )
             except EbayError as error:
                 report(str(error))
@@ -5969,7 +5990,10 @@ class ProductGeneratorGUI:
 
             def run():
                 try:
-                    code = authorization_code(redirect_var.get())
+                    code = authorization_code(
+                        redirect_var.get(),
+                        getattr(self, '_ebay_consent_state', ''),
+                    )
                     client = self.ebay_client()
                     tokens = client.exchange_code(code, self.ebay_ru_name)
                     # Nur der Erneuerungstoken wird dauerhaft abgelegt.
@@ -6911,6 +6935,7 @@ class TabbedProductGeneratorGUI:
             temporary = self.session_file.with_suffix('.tmp')
             with open(temporary, 'w', encoding='utf-8') as handle:
                 json.dump(data, handle, ensure_ascii=False, indent=2)
+            restrict_to_owner(temporary)
             os.replace(temporary, self.session_file)
         except Exception:
             pass

@@ -334,3 +334,31 @@ class HelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConsentStateTests(unittest.TestCase):
+    """Der Statuswert bindet die Antwort an die eigene Anfrage."""
+
+    def test_a_foreign_state_is_rejected(self):
+        redirect = "https://example.test/?code=abc&state=fremd"
+        with self.assertRaises(EbayError) as caught:
+            authorization_code(redirect, expected_state="eigen")
+        self.assertIn("Statuswert", str(caught.exception))
+
+    def test_a_matching_state_is_accepted(self):
+        redirect = "https://example.test/?code=abc&state=eigen"
+        self.assertEqual(
+            authorization_code(redirect, expected_state="eigen"), "abc"
+        )
+
+    def test_a_missing_state_is_rejected_when_one_was_sent(self):
+        with self.assertRaises(EbayError):
+            authorization_code(
+                "https://example.test/?code=abc", expected_state="eigen"
+            )
+
+    def test_oversized_responses_are_refused(self):
+        client = RecordingClient(answers=[b"x" * (9 * 1024 * 1024)])
+        with self.assertRaises(EbayError) as caught:
+            client.call("GET", "/sell/inventory/v1/location/x")
+        self.assertIn("zu gross", str(caught.exception))

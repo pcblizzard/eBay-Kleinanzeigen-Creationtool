@@ -53,10 +53,22 @@ def synchronized(method):
     return wrapper
 
 
+# Windows behandelt diese Namen als Geräte, auch mit Endung: eine Datei
+# "CON.txt" landet auf der Konsole statt auf der Platte.
+WINDOWS_DEVICE_NAMES = frozenset(
+    ["CON", "PRN", "AUX", "NUL"]
+    + [f"COM{number}" for number in range(1, 10)]
+    + [f"LPT{number}" for number in range(1, 10)]
+)
+
+
 def safe_filename(value: str, fallback: str = "Produkt") -> str:
     value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', " ", str(value))
     value = re.sub(r"\s+", " ", value).strip(" .")
-    return value[:120] or fallback
+    value = value[:120]
+    if value.split(".")[0].upper() in WINDOWS_DEVICE_NAMES:
+        value = f"_{value}"
+    return value or fallback
 
 
 def product_identity(name: str, identifier: str = "") -> str:
@@ -549,15 +561,21 @@ class ListingStore:
 
     @synchronized
     def images(self, product_id: str, own_only: bool = False) -> list[dict]:
-        rows = self.connection.execute(
-            f"""
-            SELECT id, path, source_url, checksum, position, is_own
-            FROM images WHERE product_id=?
-            {'AND is_own=1' if own_only else ''}
-            ORDER BY position, id
-            """,
-            (product_id,),
-        ).fetchall()
+        # Zwei feste Abfragen statt einer zusammengesetzten: in eine SQL-
+        # Anweisung gehoert nichts hinein, was zur Laufzeit entsteht.
+        if own_only:
+            statement = """
+                SELECT id, path, source_url, checksum, position, is_own
+                FROM images WHERE product_id=? AND is_own=1
+                ORDER BY position, id
+            """
+        else:
+            statement = """
+                SELECT id, path, source_url, checksum, position, is_own
+                FROM images WHERE product_id=?
+                ORDER BY position, id
+            """
+        rows = self.connection.execute(statement, (product_id,)).fetchall()
         return [dict(row) for row in rows]
 
     @synchronized
