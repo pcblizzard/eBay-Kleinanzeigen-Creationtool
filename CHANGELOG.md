@@ -4,6 +4,26 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 
 ## Unveröffentlicht
 
+### Behoben: Suchtreffer anderer Modelle standen gleichberechtigt oben
+
+Bei „Google Pixel 9 Pro, Obsidian, 256GB“ galten auch „Pixel 9 Pro XL“ und
+„Pixel 9 Pro Fold“ als gute Treffer, weil sie jedes Wort der Suche enthalten.
+Die Bewertung vergleicht jetzt zusätzlich Modellzusätze („XL“, „Fold“,
+„Mini“), Modellnummern und Speichergrößen; weicht eine davon ab, gilt der
+Treffer als **andere Variante**. Die Liste ist außerdem nach Bewertung
+sortiert, sodass der passende Artikel oben steht.
+
+Die Farbe wird bewusst nicht verlangt: Stimmen Modell und Speichergröße
+überein, gilt der Treffer als gut, auch wenn die Ausführung eine andere ist.
+„1 TB“ und „1024 GB“ werden als dieselbe Größe erkannt.
+
+### Behoben: Merkmale standen doppelt und teils unlesbar im Entwurf
+
+Die Kleinanzeigen-Schnittstelle liefert dasselbe Feld flach und als Objekt.
+Beide Formen landeten im Entwurf, weshalb jedes Merkmal zweimal erschien –
+einmal lesbar, einmal als Datenstruktur. Verschachtelte Werte werden jetzt
+auf ihre Beschriftung reduziert, und jedes Feld erscheint nur einmal.
+
 ### Hinzugefügt
 
 - Angebote lassen sich über die offiziellen eBay-Schnittstellen einstellen:

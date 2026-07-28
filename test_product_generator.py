@@ -1461,6 +1461,81 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class VariantMatchTests(unittest.TestCase):
+    """Treffer derselben Modellreihe, die ein anderes Geraet sind."""
+
+    def quality(self, title, query="Google Pixel 9 Pro, Obsidian, 256GB"):
+        return ProductGeneratorGUI.match_quality(query, title)
+
+    def test_the_searched_device_still_ranks_high(self):
+        self.assertEqual(
+            self.quality("Google Pixel 9 Pro 256GB Obsidian"), 'hoch'
+        )
+        # Ohne Farbe, wie vom Benutzer gewuenscht - Farbe ist nebensaechlich.
+        self.assertEqual(self.quality("Google Pixel 9 Pro 256GB"), 'hoch')
+        self.assertEqual(
+            self.quality("Google Pixel 9 Pro 256 GB Porcelain"), 'hoch'
+        )
+
+    def test_a_different_model_of_the_same_line_is_marked(self):
+        # Diese enthalten jedes Wort der Suche und galten deshalb als "hoch".
+        for title in (
+            "Google Pixel 9 Pro XL 256GB Obsidian",
+            "Google Pixel 9 Pro Fold 256GB Obsidian",
+            "Google Pixel 10 Pro 256GB Obsidian",
+            "Google Pixel 9a 256GB Obsidian",
+        ):
+            with self.subTest(title=title):
+                self.assertEqual(self.quality(title), 'andere Variante')
+
+    def test_a_different_storage_size_is_marked(self):
+        self.assertEqual(
+            self.quality("Google Pixel 9 Pro 128GB Obsidian"),
+            'andere Variante',
+        )
+        # 1 TB und 1024 GB bezeichnen dasselbe Geraet.
+        self.assertNotEqual(
+            ProductGeneratorGUI.match_quality(
+                "Pixel 9 Pro 1TB", "Google Pixel 9 Pro 1024GB"
+            ),
+            'andere Variante',
+        )
+
+    def test_a_short_query_still_finds_the_device(self):
+        # "Pixel 9 Pro Obsidian 256GB" - ohne Hersteller.
+        self.assertNotEqual(
+            ProductGeneratorGUI.match_quality(
+                "Pixel 9 Pro Obsidian 256GB",
+                "Google Pixel 9 Pro 256GB Obsidian",
+            ),
+            'andere Variante',
+        )
+
+    def test_a_missing_size_is_not_held_against_a_hit(self):
+        # Verglichen wird nur, was beide Seiten benennen.
+        self.assertNotEqual(
+            ProductGeneratorGUI.match_quality(
+                "Google Pixel 9 Pro 256GB", "Google Pixel 9 Pro"
+            ),
+            'andere Variante',
+        )
+
+    def test_an_exact_title_stays_exact(self):
+        self.assertEqual(
+            ProductGeneratorGUI.match_quality(
+                "Google Pixel 9 Pro XL", "Google Pixel 9 Pro XL"
+            ),
+            'exakt',
+        )
+
+    def test_storage_sizes_are_read_in_any_spelling(self):
+        sizes = ProductGeneratorGUI.storage_sizes
+        self.assertEqual(sizes("256GB"), {256})
+        self.assertEqual(sizes("256 gb"), {256})
+        self.assertEqual(sizes("1TB"), {1024})
+        self.assertEqual(sizes("Pixel 9 Pro"), set())
+
+
 class AttributeTextTests(unittest.TestCase):
     """Merkmale der Kleinanzeigen-API: verschachtelt und doppelt."""
 

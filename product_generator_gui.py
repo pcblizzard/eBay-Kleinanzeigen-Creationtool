@@ -79,6 +79,20 @@ neu original zubehoer zubehör set kit edition version modell
 mit ohne und der die das für fuer von aus im in
 """.split())
 
+# Woerter, die innerhalb einer Modellreihe verschiedene Geraete bezeichnen.
+# "Pixel 9 Pro" und "Pixel 9 Pro XL" sind nicht dasselbe Geraet, obwohl der
+# zweite Titel jedes Wort des ersten enthaelt. Ohne diese Liste standen solche
+# Treffer gleichberechtigt oben in der Ergebnisliste.
+MODEL_MARKERS = frozenset("""
+pro max plus ultra mini xl xs se lite fold flip air nano edge neo
+""".split())
+
+# Reihenfolge der Ergebnisliste: der beste Treffer zuerst, abweichende
+# Varianten zuletzt. Unbekannte Bewertungen landen in der Mitte.
+QUALITY_ORDER = {
+    'exakt': 0, 'hoch': 1, 'mittel': 2, 'unsicher': 3, 'andere Variante': 4,
+}
+
 # Bausteine, die in fast jedem Inserat vorkommen. Sie dienen als Startpunkt
 # und lassen sich vollständig ersetzen; eckige Klammern markieren wie überall
 # im Werkzeug die Stellen, die noch auszufüllen sind.
@@ -4580,7 +4594,22 @@ class ProductGeneratorGUI:
                 continue
             self.search_results.append(result)
             existing[identity] = result
+        self.sort_results_by_quality()
         self.populate_online_results()
+
+    def sort_results_by_quality(self):
+        """Beste Treffer nach oben, abweichende Varianten nach unten.
+
+        Die Anbieter liefern in eigener Reihenfolge; ohne diesen Schritt
+        stand ein passendes Geraet unter Umstaenden hinter drei fremden.
+        Innerhalb einer Bewertung bleibt die Reihenfolge der Anbieter
+        erhalten, damit die Liste zwischen zwei Suchen ruhig bleibt.
+        """
+        self.search_results.sort(
+            key=lambda result: QUALITY_ORDER.get(
+                result['variant'].get('quality'), 2
+            )
+        )
 
     def load_amazon_details_async(self, variant):
         """Lädt die langsamere Amazon-Produktseite erst nach der Auswahl."""
@@ -4805,7 +4834,87 @@ class ProductGeneratorGUI:
         return host.removeprefix('www.') or 'Lokal'
 
     @staticmethod
-    def match_quality(query, title, source_url=''):
+    def storage_sizes(text):
+        """Speichergroessen als Vielfache von GB.
+
+        "1 TB" und "1024GB" bezeichnen dasselbe Geraet und muessen deshalb
+        denselben Wert ergeben.
+        """
+        factors = {'mb': 1 / 1024, 'gb': 1, 'tb': 1024}
+        return {
+            round(int(amount) * factors[unit.lower()], 4)
+            for amount, unit in re.findall(
+                r'(\d+)\s*(MB|GB|TB)\b', text, re.IGNORECASE
+            )
+        }
+
+    @classmethod
+    def model_tokens(cls, text):
+        """Modellkennzeichnende Woerter und Zahlen.
+
+        "Pro", "XL" oder "Fold" unterscheiden Geraete, die sonst gleich
+        heissen. Speichergroessen werden vorher entfernt, damit die "256"
+        aus "256GB" nicht als Modellnummer gilt.
+        """
+        without_storage = re.sub(
+            r'\d+\s*(?:MB|GB|TB)\b', ' ', text, flags=re.IGNORECASE
+        )
+        words = re.findall(r'[a-z0-9]+', without_storage.lower())
+        markers = {word for word in words if word in MODEL_MARKERS}
+        numbers = {
+            word for word in words
+            if re.fullmatch(r'\d{1,4}[a-z]?', word) and word not in markers
+        }
+        return markers, numbers
+
+    @classmethod
+    def variant_conflict(cls, query, title):
+        """Erkennt ein anderes Geraet trotz passender Woerter.
+
+        "Pixel 9 Pro XL" enthaelt jedes Wort aus "Pixel 9 Pro" und galt
+        deshalb als guter Treffer, obwohl es ein anderes Geraet ist.
+        Verglichen wird nur, was beide Seiten benennen - fehlt eine Angabe,
+        wird sie nicht gegen den Treffer ausgelegt.
+        """
+        query_sizes, title_sizes = cls.storage_sizes(query), \
+            cls.storage_sizes(title)
+        if query_sizes and title_sizes and query_sizes.isdisjoint(title_sizes):
+            return True
+        query_markers, query_numbers = cls.model_tokens(query)
+        title_markers, title_numbers = cls.model_tokens(title)
+        # Ein Zusatz auf einer der beiden Seiten - "XL", "Fold", "Mini" -
+        # macht aus dem Geraet ein anderes, in beide Richtungen.
+        if query_markers ^ title_markers:
+            return True
+        if (
+            query_numbers and title_numbers
+            and query_numbers.isdisjoint(title_numbers)
+        ):
+            return True
+        return False
+
+    @classmethod
+    def same_model(cls, query, title):
+        """Modellnummer und Speichergroesse stimmen ueberein.
+
+        Dann handelt es sich um dasselbe Geraet, auch wenn die Titel sich
+        sonst unterscheiden. Vor allem die Farbe darf einen Treffer nicht
+        abwerten: "Pixel 9 Pro 256GB Porcelain" ist derselbe Artikel wie
+        "... Obsidian", nur in einer anderen Ausfuehrung.
+        """
+        query_sizes, title_sizes = cls.storage_sizes(query), \
+            cls.storage_sizes(title)
+        if not query_sizes or query_sizes != title_sizes:
+            return False
+        query_markers, query_numbers = cls.model_tokens(query)
+        title_markers, title_numbers = cls.model_tokens(title)
+        return (
+            query_markers == title_markers
+            and bool(query_numbers & title_numbers)
+        )
+
+    @classmethod
+    def match_quality(cls, query, title, source_url=''):
         normalized_query = re.sub(r'\W+', ' ', query.lower()).strip()
         normalized_title = re.sub(r'\W+', ' ', title.lower()).strip()
         exact_identifier = bool(
@@ -4813,6 +4922,10 @@ class ProductGeneratorGUI:
         )
         if exact_identifier or normalized_query == normalized_title:
             return 'exakt'
+        if cls.variant_conflict(query, title):
+            return 'andere Variante'
+        if cls.same_model(query, title):
+            return 'hoch'
         ratio = difflib.SequenceMatcher(
             None, normalized_query, normalized_title
         ).ratio()
