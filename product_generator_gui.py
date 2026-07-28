@@ -94,7 +94,10 @@ BUYBACK_SERVICES = (
         'https://www.medimops.de/produkte-C0/?fcIsSearch=1&searchparam={value}',
         'query',
     ),
-    ('rebuy', 'https://www.rebuy.de/verkaufen', 'none'),
+    # Bewusst die Verkaufssuche: gefragt ist, was rebuy zahlt, nicht was ein
+    # Kauf dort kostet. Sie hat einen eigenen Pfad und einen eigenen
+    # Parameternamen - /verkaufen/suche?query= statt /kaufen/suchen?q=.
+    ('rebuy', 'https://rebuy.de/verkaufen/suche?query={value}', 'query'),
 )
 
 OWN_IMAGE_MAX_EDGE = 2000

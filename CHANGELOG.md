@@ -39,8 +39,10 @@ Werkzeug aus Geizhals, Amazon, Wikipedia, der DNB und der eBay-API bezieht.
 ### Hinzugefügt: Ankaufspreise nachschlagen
 
 **Ankaufspreis prüfen** öffnet momox, medimops oder rebuy direkt beim
-gesuchten Artikel: momox über ISBN beziehungsweise EAN, medimops als
-Textsuche, die ohne Kennung auf den Produktnamen zurückfällt. Ankaufspreise
+gesuchten Artikel: momox über ISBN beziehungsweise EAN, medimops und rebuy
+als Textsuche, die ohne Kennung auf den Produktnamen zurückfällt. Bei rebuy
+wird bewusst die Verkaufssuche aufgerufen – gefragt ist, was rebuy zahlt,
+nicht was ein Kauf dort kostet. Ankaufspreise
 sind eine sinnvolle Untergrenze für die eigene Preisfindung. Abgerufen oder
 ausgewertet wird nichts – die Dienste weisen automatisierte Zugriffe ab.
 

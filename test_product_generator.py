@@ -1606,3 +1606,55 @@ class BuybackTests(unittest.TestCase):
             "https://www.medimops.de/produkte-C0/"
             "?fcIsSearch=1&searchparam=XBox+One"
         ])
+
+
+class BuybackUrlTests(unittest.TestCase):
+    """Die belegten Adressmuster der drei Ankaufsdienste."""
+
+    @staticmethod
+    def gui(variant):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        gui.selected_variant = variant
+        gui.search_var = SimpleNamespace(get=lambda: "")
+        gui.language = "de"
+        gui.status_var = SimpleNamespace(set=lambda text: None)
+        return gui
+
+    def open_all(self, variant):
+        gui = self.gui(variant)
+        adressen = {}
+        with patch("product_generator_gui.webbrowser.open") as opener:
+            for name, template, needs in BUYBACK_SERVICES:
+                if needs == "identifier" and not gui.product_identifier():
+                    continue
+                opener.reset_mock()
+                gui.open_buyback_service(template, needs, name)
+                adressen[name] = opener.call_args[0][0]
+        return adressen
+
+    def test_every_service_gets_its_own_pattern(self):
+        adressen = self.open_all({"name": "XBox One"})
+        self.assertEqual(
+            adressen["medimops"],
+            "https://www.medimops.de/produkte-C0/"
+            "?fcIsSearch=1&searchparam=XBox+One",
+        )
+        # rebuy: Verkaufssuche, nicht Kaufsuche - gefragt ist der Ankaufspreis.
+        self.assertEqual(
+            adressen["rebuy"],
+            "https://rebuy.de/verkaufen/suche?query=XBox+One",
+        )
+        self.assertNotIn("momox", adressen)   # ohne Kennung nicht aufrufbar
+
+    def test_identifiers_reach_momox_directly(self):
+        adressen = self.open_all({"name": "Buch", "isbn": "9781788992664"})
+        self.assertEqual(
+            adressen["momox"], "https://www.momox.de/offer/9781788992664"
+        )
+
+    def test_spaces_are_encoded_for_query_strings(self):
+        """In einer Query bedeuten + und %20 beide ein Leerzeichen."""
+        adressen = self.open_all({"name": "Google Pixel 9 Pro"})
+        for name, url in adressen.items():
+            self.assertNotIn(" ", url, name)
+            self.assertIn("Google+Pixel+9+Pro", url, name)
