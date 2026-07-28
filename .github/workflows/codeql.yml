@@ -21,6 +21,10 @@ jobs:
     permissions:
       security-events: write
       contents: read
+      # Die Action liest Angaben zum eigenen Lauf; ohne diese Berechtigung
+      # meldet sie "Resource not accessible by integration" und der Job faellt,
+      # obwohl die Analyse selbst durchgelaufen ist.
+      actions: read
 
     steps:
       - name: Check out repository
