@@ -42,7 +42,9 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 - ✅ **Sichere API-Zugangsdaten**: Speicherung im Betriebssystem-Schlüsselspeicher
 - ✅ **Sicherheitskontrollen**: Keyring-Prüfung, Verbindungstests und Secret-Löschung
 - ✅ **Geschützte Webimporte**: Größenlimits und Sperre lokaler Netzwerkziele
-- ✅ **Security-CI**: Abhängigkeits- und Secret-Scans bei jedem Push
+- ✅ **Security-CI**: Abhängigkeits-, Secret- und CodeQL-Scans bei jedem Push
+- ✅ **Sicherheitsdokumentation**: [SECURITY.md](SECURITY.md) beschreibt Umgang mit
+  Zugangsdaten, Netzwerk und Dateien samt bekannter Einschränkungen
 
 ## Installation
 
