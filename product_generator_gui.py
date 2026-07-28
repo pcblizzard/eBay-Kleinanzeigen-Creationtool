@@ -1260,6 +1260,9 @@ class ProductGeneratorGUI:
 
     def save_config(self):
         try:
+            # Werte anderer Bereiche - etwa die Fenstergroesse - duerfen beim
+            # Schreiben nicht verlorengehen.
+            config_before = self.load_config()
             config = {
                 'language': self.language,
                 'font_size': self.font_size,
@@ -1269,6 +1272,9 @@ class ProductGeneratorGUI:
                 'ebay_ru_name': self.ebay_ru_name,
                 'ebay_postal_code': self.ebay_postal_code,
                 'ebay_country': self.ebay_country,
+                'window_geometry': getattr(
+                    self, 'window_geometry', ''
+                ) or config_before.get('window_geometry', ''),
                 'restore_session': self.restore_session_enabled,
                 'clear_session_on_exit': self.clear_session_on_exit,
                 'providers': {
@@ -1679,6 +1685,11 @@ class ProductGeneratorGUI:
             height=10,
             width=55,
             wrap=tk.WORD,
+            # Ohne undo=True kennt Tk kein Strg+Z: ein versehentlich
+            # geloeschter Absatz waere unwiederbringlich.
+            undo=True,
+            maxundo=-1,
+            autoseparators=True,
         )
         self.preview_text.pack(fill=tk.BOTH, expand=True)
         scrollbar_text.config(command=self.preview_text.yview)
@@ -1991,7 +2002,7 @@ class ProductGeneratorGUI:
         self.variant_listbox.delete(0, tk.END)
         self.selected_variant = None
         self.preview_text.config(state=tk.NORMAL)
-        self.preview_text.delete(1.0, tk.END)
+        self.replace_preview_text('')
         self.reset_product_image()
         self.reset_ebay_data_check()
         
@@ -2064,8 +2075,7 @@ class ProductGeneratorGUI:
             )
 
             self.preview_text.config(state=tk.NORMAL)
-            self.preview_text.delete(1.0, tk.END)
-            self.preview_text.insert(1.0, display_description)
+            self.replace_preview_text(display_description)
 
             source_url = self.selected_variant.get('source_url', '')
             if (
@@ -2309,6 +2319,18 @@ class ProductGeneratorGUI:
         self.update_listing_completeness()
         self.refresh_own_images()
 
+    def replace_preview_text(self, content):
+        """Ersetzt den Editorinhalt programmgesteuert.
+
+        Der Rückgängig-Verlauf wird dabei verworfen: sonst holte ein Strg+Z
+        nach dem Plattformwechsel den Entwurf der vorigen Plattform zurück.
+        """
+        self.preview_text.delete('1.0', tk.END)
+        if content:
+            self.preview_text.insert('1.0', content)
+        self.preview_text.edit_reset()
+        self.preview_text.edit_modified(False)
+
     def strip_generated_legal(self, text):
         marker = '\n\n---\n\n' + self.legal_clause
         value = str(text)
@@ -2398,9 +2420,7 @@ class ProductGeneratorGUI:
             return
         self._switching_platform = True
         self.platform_title_var.set(draft['title'])
-        self.preview_text.delete('1.0', tk.END)
-        self.preview_text.insert('1.0', draft['description'])
-        self.preview_text.edit_modified(False)
+        self.replace_preview_text(draft['description'])
         self._switching_platform = False
         self.render_live_preview()
         self.update_listing_counters()
@@ -3027,8 +3047,7 @@ class ProductGeneratorGUI:
                 draft = self.generator.build_sales_draft(
                     variant['name'], description, self.language
                 )
-                self.preview_text.delete('1.0', tk.END)
-                self.preview_text.insert('1.0', draft)
+                self.replace_preview_text(draft)
         labels = [self.ebay_category_display(entry) for entry in categories]
         self.ebay_category_combo.configure(values=labels)
         if labels:
@@ -4353,8 +4372,7 @@ class ProductGeneratorGUI:
         sales_draft = self.generator.build_sales_draft(
             variant['name'], description, self.language
         )
-        self.preview_text.delete(1.0, tk.END)
-        self.preview_text.insert(1.0, sales_draft)
+        self.replace_preview_text(sales_draft)
         self.initialize_listing_assistant(variant, sales_draft)
         self.status_var.set(
             f"{TRANSLATIONS[self.language]['selected_variant']} {variant['name']}"
@@ -4487,8 +4505,7 @@ class ProductGeneratorGUI:
         sales_draft = self.generator.build_sales_draft(
             variant['name'], description, self.language
         )
-        self.preview_text.delete(1.0, tk.END)
-        self.preview_text.insert(1.0, sales_draft)
+        self.replace_preview_text(sales_draft)
         self.status_var.set(
             f"{TRANSLATIONS[self.language]['selected_variant']} "
             f"{variant['name']}"
@@ -6563,9 +6580,6 @@ class TabbedProductGeneratorGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.geometry("1200x900")
-        self.root.resizable(True, True)
-        self.root.title(TRANSLATIONS['de']['title'])
         self.controllers = {}
         self.retired_tabs = []
         self.tab_counter = 0
@@ -6578,6 +6592,14 @@ class TabbedProductGeneratorGUI:
             )
         except Exception:
             app_config = {}
+        saved_geometry = app_config.get('window_geometry', '')
+        self.window_geometry = (
+            saved_geometry
+            if self.geometry_is_on_screen(self.root, saved_geometry) else ''
+        )
+        self.root.geometry(self.window_geometry or "1200x900")
+        self.root.resizable(True, True)
+        self.root.title(TRANSLATIONS['de']['title'])
         self.restore_session_enabled = bool(
             app_config.get('restore_session', True)
         )
@@ -6660,11 +6682,55 @@ class TabbedProductGeneratorGUI:
         )
         root.config(menu=self.menubar)
         self.notebook.bind('<<NotebookTabChanged>>', self.on_tab_changed)
+        self.bind_shortcuts()
         self.settings_window = None
         if not self.restore_session_enabled or not self.restore_session():
             self.add_tab()
         self.root.after(SESSION_AUTOSAVE_MS, self.autosave_session)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def bind_shortcuts(self):
+        """Übliche Tastenkürzel; Strg+Z besorgt das Textfeld selbst."""
+        for sequence, action in (
+            ('<Control-s>', lambda: self.run_on_active(
+                ProductGeneratorGUI.save_file)),
+            ('<Control-S>', lambda: self.run_on_active(
+                ProductGeneratorGUI.save_file)),
+            ('<Control-n>', self.add_tab),
+            ('<Control-N>', self.add_tab),
+            ('<Control-w>', self.close_current_tab),
+            ('<Control-W>', self.close_current_tab),
+            ('<Control-o>', self.open_file),
+            ('<Control-O>', self.open_file),
+        ):
+            self.root.bind_all(
+                sequence, lambda event, run=action: (run(), 'break')[1]
+            )
+
+    def remember_geometry(self):
+        """Merkt Größe und Position, damit das Fenster so wiederkommt."""
+        try:
+            if self.root.state() == 'normal':
+                self.window_geometry = self.root.winfo_geometry()
+        except tk.TclError:
+            pass
+
+    @staticmethod
+    def geometry_is_on_screen(root, geometry):
+        """Verwirft Positionen außerhalb des sichtbaren Bereichs.
+
+        Wird ein zweiter Bildschirm abgezogen, läge das Fenster sonst
+        unerreichbar im Nichts.
+        """
+        match = re.match(r'^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$', str(geometry or ''))
+        if not match:
+            return False
+        width, height, left, top = (int(value) for value in match.groups())
+        return (
+            width >= 400 and height >= 300
+            and -50 <= left <= root.winfo_screenwidth() - 200
+            and -20 <= top <= root.winfo_screenheight() - 150
+        )
 
     def update_chrome_language(self, language):
         trans = TRANSLATIONS.get(language, TRANSLATIONS['de'])
@@ -6741,8 +6807,7 @@ class TabbedProductGeneratorGUI:
             )
         )
         controller.variant_listbox.selection_set(0)
-        controller.preview_text.delete('1.0', tk.END)
-        controller.preview_text.insert('1.0', text)
+        controller.replace_preview_text(text)
         controller.initialize_listing_assistant(variant, text)
         controller.render_live_preview()
         if controller.title_callback:
@@ -7315,8 +7380,7 @@ class TabbedProductGeneratorGUI:
                 and 'amazon.' in variant.get('source_url', '')
             ):
                 draft = controller.repair_known_fragments_in_text(draft)
-            controller.preview_text.delete('1.0', tk.END)
-            controller.preview_text.insert('1.0', draft)
+            controller.replace_preview_text(draft)
             if isinstance(variant, dict) and variant.get('name'):
                 controller.initialize_listing_assistant(variant, draft)
                 saved_drafts = saved.get('platform_drafts')
@@ -7369,6 +7433,13 @@ class TabbedProductGeneratorGUI:
         return True
 
     def on_close(self):
+        self.remember_geometry()
+        controller = self.active_controller()
+        if controller is not None:
+            # Die Konfiguration schreibt der Controller; das Hauptfenster
+            # reicht seine Geometrie nur durch.
+            controller.window_geometry = self.window_geometry
+            controller.save_config()
         if self.clear_session_on_exit:
             self.delete_session_file()
         else:

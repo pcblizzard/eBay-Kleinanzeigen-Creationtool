@@ -1758,3 +1758,46 @@ class ProductLinkTests(unittest.TestCase):
         # Grund und Ersatzbegriff muessen benannt sein.
         self.assertIn("blockiert", hinweis)
         self.assertIn("Google Pixel", hinweis)
+
+
+class EditorBasicsTests(unittest.TestCase):
+    """Rückgängig, Tastenkürzel und gemerkte Fenstergröße."""
+
+    @unittest.skipUnless(DISPLAY_AVAILABLE, "kein Display verfügbar")
+    def test_undo_restores_typing_but_not_a_platform_switch(self):
+        root = tk.Tk()
+        try:
+            root.withdraw()
+            editor = tk.Text(root, undo=True, maxundo=-1)
+            stub = SimpleNamespace(preview_text=editor)
+            ProductGeneratorGUI.replace_preview_text(stub, "Erste Fassung")
+            editor.insert(tk.END, " ergänzt")
+            editor.edit_undo()
+            self.assertEqual(
+                editor.get("1.0", tk.END).strip(), "Erste Fassung"
+            )
+            # Ein programmgesteuerter Wechsel darf nicht rueckgaengig zu
+            # machen sein - sonst erschiene der Entwurf der vorigen Plattform.
+            ProductGeneratorGUI.replace_preview_text(stub, "Andere Plattform")
+            with self.assertRaises(tk.TclError):
+                editor.edit_undo()
+        finally:
+            root.destroy()
+
+    @unittest.skipUnless(DISPLAY_AVAILABLE, "kein Display verfügbar")
+    def test_offscreen_geometries_are_rejected(self):
+        root = tk.Tk()
+        try:
+            root.withdraw()
+            gueltig = TabbedProductGeneratorGUI.geometry_is_on_screen
+            self.assertTrue(gueltig(root, "1400x950+100+50"))
+            # Der Rand eines maximierten Fensters unter Windows.
+            self.assertTrue(gueltig(root, "1200x900+-8+-8"))
+            # Ein abgezogener zweiter Bildschirm darf das Fenster nicht
+            # unerreichbar machen.
+            self.assertFalse(gueltig(root, "1200x900+99999+99999"))
+            self.assertFalse(gueltig(root, "100x80+0+0"))
+            self.assertFalse(gueltig(root, ""))
+            self.assertFalse(gueltig(root, "kaputt"))
+        finally:
+            root.destroy()
