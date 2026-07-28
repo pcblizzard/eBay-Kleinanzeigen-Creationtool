@@ -1477,7 +1477,18 @@ class UrlAndMarkupTests(unittest.TestCase):
         self.assertEqual(clean('<a title="a>b">Text</a>'), "Text")
         self.assertEqual(clean("<script>code()</script>Sichtbar"), "Sichtbar")
         self.assertEqual(clean("<p>Eins</p><p>Zwei</p>"), "Eins Zwei")
-        self.assertEqual(clean("Rest <div foo="), "Rest")
+
+    def test_an_unfinished_tag_leaves_no_markup_behind(self):
+        """Abgeschnittenes Markup darf kein Tag hinterlassen.
+
+        Ob HTMLParser das Bruchstueck verwirft oder als Text ausgibt, haengt
+        vom CPython-Stand ab. Festgehalten wird deshalb nur, worauf es
+        ankommt: der sichtbare Text bleibt, ein Tag entsteht nicht.
+        """
+        result = ProductGeneratorGUI.clean_html_text("Rest <div foo=")
+        self.assertIn("Rest", result)
+        self.assertNotIn("<div", result)
+        self.assertNotIn("<p", ProductGeneratorGUI.clean_html_text("A <p"))
 
     def test_source_names_follow_the_host(self):
         name = ProductGeneratorGUI.source_name
