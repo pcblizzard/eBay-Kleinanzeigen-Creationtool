@@ -18,6 +18,26 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 - Der Wunschpreis kennt die bei Kleinanzeigen übliche Preisart: VB,
   Festpreis oder „Zu verschenken“.
 
+### Geprüft und verworfen: weitere Verkaufsplattformen
+
+Vinted, Shpock und Mädchenflohmarkt wurden als zusätzliche Plattformprofile
+geprüft und nicht aufgenommen:
+
+- **Mädchenflohmarkt** – man kann dort nichts selbst einstellen.
+- **Shpock** – zum Einstellen über die Website ist zunächst eine Anmeldung in
+  der App nötig. Ein vorbereiteter Entwurf hilft damit praktisch nicht. Ein
+  bereits gebautes Profil (Titel 45, Beschreibung 500, fünf Fotos) wurde
+  deshalb wieder entfernt.
+- **Vinted** – keine öffentliche Schnittstelle. „Vinted Pro Integrations“ ist
+  auf gewerbliche Konten und eine Freigabeliste beschränkt, die interne
+  Schnittstelle stark bot-geschützt. Zeichen- und Bildgrenzen werden nicht
+  veröffentlicht; geratene Werte gehören nicht in den Quelltext.
+
+Die Verdichtung knapper Entwürfe gilt seither für jedes Profil unterhalb von
+1000 Zeichen statt fest für die mobile eBay-Vorschau. Gespeicherte Entwürfe
+einer nicht mehr geführten Plattform werden beim Laden übergangen, statt den
+Beitrag lahmzulegen.
+
 ### Nicht umsetzbar: Anzeigen automatisch bei Kleinanzeigen einstellen
 
 Ein assistierter Browser-Ansatz (Playwright, sichtbares Fenster, eigenes

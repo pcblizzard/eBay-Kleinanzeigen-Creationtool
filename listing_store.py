@@ -33,9 +33,6 @@ PLATFORM_PROFILES = {
     "ebay_mobile": PlatformProfile(
         "ebay_mobile", "eBay – mobile Kurzvorschau", 80, 800
     ),
-    # Shpock: Titel 45, Beschreibung 500 Zeichen, fuenf Fotos je hoechstens
-    # 3 MB - Werte aus der Shpock-Hilfe.
-    "shpock": PlatformProfile("shpock", "Shpock", 45, 500),
 }
 
 # Ab dieser Grenze wird der Entwurf verdichtet statt nur beschnitten.
@@ -621,7 +618,6 @@ class ListingStore:
             "ebay": "beitrag-ebay.txt",
             "ebay_detailed": "beitrag-ebay-ausfuehrlich.txt",
             "ebay_mobile": "beitrag-ebay-mobil.txt",
-            "shpock": "beitrag-shpock.txt",
         }
         for platform, filename in mapping.items():
             draft = drafts.get(platform)

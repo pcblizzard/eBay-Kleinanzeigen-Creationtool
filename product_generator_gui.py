@@ -73,7 +73,6 @@ PLATFORM_IMAGE_LIMITS = {
     'ebay': 24,
     'ebay_detailed': 24,
     'ebay_mobile': 24,
-    'shpock': 5,
 }
 OWN_IMAGE_MAX_EDGE = 2000
 OWN_IMAGE_MAX_BYTES = 12 * 1024 * 1024
@@ -2132,6 +2131,10 @@ class ProductGeneratorGUI:
                     ),
                 }
                 for key, value in stored.items()
+                # Entwürfe einer nicht mehr geführten Plattform bleiben in der
+                # Datenbank, dürfen aber nicht in die Oberfläche gelangen: der
+                # Zugriff auf PLATFORM_PROFILES würde sonst fehlschlagen.
+                if key in PLATFORM_PROFILES
             }
             for key, profile in PLATFORM_PROFILES.items():
                 if key not in self.platform_drafts:
@@ -2222,8 +2225,8 @@ class ProductGeneratorGUI:
     def compact_draft(self, body, platform='ebay_mobile'):
         """Verdichtet einen Entwurf auf ganze Absätze, ohne Neues zu erfinden.
 
-        Für knappe Profile wie die mobile eBay-Vorschau (800 Zeichen) oder
-        Shpock (500) reicht bloßes Abschneiden nicht.
+        Für knappe Profile wie die mobile eBay-Vorschau mit 800 Zeichen
+        reicht bloßes Abschneiden nicht.
         """
         limit = PLATFORM_PROFILES[platform].description_limit
         legal = self.legal_clause.strip()
@@ -7103,7 +7106,12 @@ class TabbedProductGeneratorGUI:
                 controller.initialize_listing_assistant(variant, draft)
                 saved_drafts = saved.get('platform_drafts')
                 if isinstance(saved_drafts, dict) and saved_drafts:
-                    controller.platform_drafts = saved_drafts
+                    # Wie beim Laden aus der Datenbank: eine inzwischen
+                    # entfernte Plattform darf den Beitrag nicht lahmlegen.
+                    controller.platform_drafts = {
+                        key: value for key, value in saved_drafts.items()
+                        if key in PLATFORM_PROFILES
+                    }
                 platform = saved.get('platform', 'kleinanzeigen')
                 if platform in PLATFORM_PROFILES:
                     controller.current_platform = platform

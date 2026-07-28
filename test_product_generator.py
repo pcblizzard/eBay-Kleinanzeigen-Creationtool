@@ -1501,23 +1501,27 @@ class UrlAndMarkupTests(unittest.TestCase):
         self.assertEqual(name("https://fremd.test/?x=amazon.de"), "fremd.test")
 
 
-class ShpockProfileTests(unittest.TestCase):
-    """Shpock hat die knappsten Grenzen aller Profile."""
 
-    def test_shpock_limits_match_the_documented_values(self):
-        profile = PLATFORM_PROFILES["shpock"]
-        self.assertEqual(profile.title_limit, 45)
-        self.assertEqual(profile.description_limit, 500)
+class RetiredPlatformTests(unittest.TestCase):
+    """Eine entfernte Plattform darf gespeicherte Beiträge nicht lahmlegen."""
 
-    def test_short_profiles_are_compacted_not_merely_cut(self):
-        stub = SimpleNamespace(legal_clause="Privatverkauf.")
-        body = "\n\n".join([f"Absatz {number} " + "x" * 120
-                            for number in range(1, 8)])
-        compact = ProductGeneratorGUI.compact_draft(stub, body, "shpock")
-        full = ProductGeneratorGUI.full_platform_description(stub, compact)
-        self.assertLessEqual(
-            len(full), PLATFORM_PROFILES["shpock"].description_limit
-        )
-        # Ganze Absaetze, kein abgeschnittener Satz am Ende.
-        self.assertTrue(compact.startswith("Absatz 1"))
-        self.assertFalse(compact.endswith("x" * 5 + "…"))
+    def test_drafts_of_unknown_platforms_are_ignored(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = ListingStore(Path(folder) / "listings.db")
+            try:
+                product_id = store.upsert_product("Testprodukt", "1")
+                store.save_draft(product_id, "kleinanzeigen", "Titel", "Text")
+                # Entwurf einer Plattform, die es nicht mehr gibt.
+                store.save_draft(product_id, "shpock", "Alt", "Alter Text")
+                stored = store.load_drafts(product_id)
+                self.assertIn("shpock", stored)
+                bekannt = {
+                    key: value for key, value in stored.items()
+                    if key in PLATFORM_PROFILES
+                }
+                self.assertNotIn("shpock", bekannt)
+                # Jede verbliebene Plattform ist auffindbar.
+                for key in bekannt:
+                    self.assertIn(key, PLATFORM_PROFILES)
+            finally:
+                store.close()
