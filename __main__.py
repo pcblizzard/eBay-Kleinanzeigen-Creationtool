@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
 eBay (Kleinanzeigen) Creationtool
-Starte das GUI mit: python -m product_generator_gui
+
+Starte das GUI aus dem Projektordner mit:
+    python .
+oder nach der Installation mit:
+    ebay-creationtool
 """
 
 from product_generator_gui import main

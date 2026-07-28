@@ -10,6 +10,8 @@ import io
 import hashlib
 import locale
 import os
+import shutil
+import sys
 import base64
 from pathlib import Path
 from datetime import datetime
@@ -27,22 +29,118 @@ import time
 import unicodedata
 import urllib.parse
 import urllib.request
+import webbrowser
 import urllib.error
 import xml.etree.ElementTree as ET
 
 from listing_store import ListingStore, PLATFORM_PROFILES, safe_filename
+from ebay_listing import (
+    DEFAULT_LOCATION_KEY,
+    EbayError,
+    EbayListingClient,
+    ListingDraft,
+    authorization_code,
+    condition_code,
+    consent_url,
+    sku_for,
+)
 
 try:
-    from PIL import Image, ImageTk
+    from PIL import Image, ImageOps, ImageTk
 except ImportError:
     Image = None
+    ImageOps = None
     ImageTk = None
 
 # Konstante für die Gewährleistungsklausel
 WARRANTY_CLAUSE = """Privatverkauf. Die Ware wird unter Ausschluss der Sachmängelhaftung nach § 475 BGB verkauft. Ausgeschlossen ist jede Gewährleistung für Sachmängel. Die Haftung für arglistig verschwiegene Mängel sowie für Schäden aus der Verletzung von Leben, Körper oder Gesundheit bleibt unberührt."""
 
+MODULE_DIR = Path(__file__).resolve().parent
+APPLICATION_NAME = "eBay-Kleinanzeigen-Creationtool"
+
+# Eigene Fotos: Grenzen der Plattformen und Vorgaben fuer die Aufbereitung.
+OWN_IMAGE_SUFFIXES = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif',
+                      '.tiff', '.heic', '.heif')
+PLATFORM_IMAGE_LIMITS = {
+    'kleinanzeigen': 20,
+    'ebay': 24,
+    'ebay_detailed': 24,
+    'ebay_mobile': 24,
+}
+OWN_IMAGE_MAX_EDGE = 2000
+OWN_IMAGE_MAX_BYTES = 12 * 1024 * 1024
+OWN_IMAGE_QUALITY = 88
+
+
+def user_data_dir():
+    """Benutzerbezogenes Datenverzeichnis der Anwendung."""
+    root = os.environ.get('LOCALAPPDATA') or (Path.home() / '.local' / 'share')
+    return Path(root) / APPLICATION_NAME
+
+
+def prepare_own_image(source_path, target_path, max_edge=OWN_IMAGE_MAX_EDGE):
+    """Bereitet ein eigenes Foto fuer den Upload auf.
+
+    Entfernt saemtliche EXIF-Daten, dreht das Bild nach seiner
+    Orientierungsangabe und verkleinert es auf eine vertretbare Kantenlaenge.
+
+    Das Entfernen der EXIF-Daten ist der wichtigste Schritt: Handyfotos
+    enthalten GPS-Koordinaten. Wer den Artikel zu Hause fotografiert,
+    veroeffentlicht sonst mit dem Bild seine Wohnadresse.
+    """
+    if Image is None:
+        # Ohne Pillow wird unveraendert kopiert; der Aufrufer warnt davor.
+        shutil.copy2(source_path, target_path)
+        return False
+    with Image.open(source_path) as opened:
+        image = ImageOps.exif_transpose(opened)
+        target = Path(target_path)
+        if target.suffix.lower() in ('.jpg', '.jpeg') and image.mode not in (
+            'RGB', 'L'
+        ):
+            image = image.convert('RGB')
+        if max_edge and max(image.size) > max_edge:
+            image.thumbnail((max_edge, max_edge), Image.LANCZOS)
+        # Ein frisches Bild traegt kein info-Dictionary und damit keine
+        # Metadaten; paste kopiert nur die Bildpunkte.
+        clean = Image.new(image.mode, image.size)
+        clean.paste(image)
+        if target.suffix.lower() in ('.jpg', '.jpeg'):
+            clean.save(target, quality=OWN_IMAGE_QUALITY, optimize=True)
+        else:
+            clean.save(target)
+    return True
+
+
+def default_products_file():
+    """Findet die Produktdatenbank auch im installierten Konsolenskript.
+
+    Gesucht wird neben dem Modul, in den mitinstallierten Paketdaten und
+    zuletzt im benutzerbezogenen Datenverzeichnis.
+    """
+    candidates = (
+        MODULE_DIR / "products.json",
+        Path(sys.prefix) / "share" / "ebay-creationtool" / "products.json",
+        user_data_dir() / "products.json",
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
+
+
+def default_output_dir():
+    """Standard-Ausgabeordner; im installierten Paket unterhalb des Nutzers."""
+    project_output = MODULE_DIR / "product_listings"
+    if os.access(MODULE_DIR, os.W_OK):
+        return project_output
+    return user_data_dir() / "product_listings"
+
+
 SECRET_SERVICE = "eBay-Kleinanzeigen-Creationtool"
 SECRET_PLACEHOLDER = "****************"
+SESSION_AUTOSAVE_MS = 15 * 1000
+RETIRED_TAB_GRACE_MS = 60 * 1000
 MAX_TEXT_RESPONSE_BYTES = 5 * 1024 * 1024
 MAX_IMAGE_RESPONSE_BYTES = 15 * 1024 * 1024
 
@@ -59,6 +157,68 @@ TRANSLATIONS = {
         "previous_image": "◀",
         "next_image": "▶",
         "save_image": "Bild speichern…",
+        "own_images_frame": "Eigene Fotos",
+        "add_own_images": "Hinzufügen…",
+        "own_images_title": "Eigene Produktfotos auswählen",
+        "own_images_count": "{count} von {limit} Fotos ({platform})",
+        "own_images_limit": "Grenze erreicht: {platform} erlaubt {limit} Fotos.",
+        "own_images_hint": (
+            "Beim Export werden Standortdaten (GPS) entfernt, die Drehung "
+            "korrigiert und die Größe angepasst. Der Upload erfolgt weiterhin "
+            "von Hand auf der jeweiligen Plattform."
+        ),
+        "own_images_no_pillow": (
+            "Pillow fehlt: Fotos werden unverändert kopiert, "
+            "einschließlich ihrer Standortdaten."
+        ),
+        "own_images_replace_note": (
+            "Eigene Fotos ersetzen im Export die Herstellerbilder."
+        ),
+        "ebay_publish": "🛒 Bei eBay einstellen…",
+        "ebay_publish_title": "Angebot bei eBay einstellen",
+        "ebay_consent_frame": "1. Zugriff auf dein eBay-Konto",
+        "ebay_consent_missing": "Noch keine Einwilligung erteilt.",
+        "ebay_consent_present": "Einwilligung liegt vor.",
+        "ebay_consent_start": "Zugriff im Browser erteilen…",
+        "ebay_consent_paste": "Adresse nach der Zustimmung hier einfügen:",
+        "ebay_consent_save": "Einwilligung speichern",
+        "ebay_consent_saved": "Einwilligung gespeichert.",
+        "ebay_consent_hint": (
+            "Der Browser öffnet die eBay-Seite. Nach dem Zustimmen leitet eBay "
+            "auf deine RuName-Adresse weiter — kopiere die vollständige Adresse "
+            "aus der Adresszeile hierher."
+        ),
+        "ebay_runame_label": "RuName (Redirect-URL-Name):",
+        "ebay_policies_frame": "2. Richtlinien und Standort",
+        "ebay_policy_fulfillment": "Versand:",
+        "ebay_policy_payment": "Zahlung:",
+        "ebay_policy_return": "Rücknahme:",
+        "ebay_policies_load": "Richtlinien laden",
+        "ebay_postal_code": "PLZ:",
+        "ebay_country": "Land:",
+        "ebay_offer_frame": "3. Angebot",
+        "ebay_quantity": "Menge:",
+        "ebay_check": "Angaben prüfen",
+        "ebay_publish_action": "Angebot anlegen und veröffentlichen",
+        "ebay_publish_missing": "Es fehlen noch:",
+        "dialog_close": "Schließen",
+        "ebay_ready": "Alle Pflichtangaben vorhanden.",
+        "ebay_confirm": (
+            "Damit entsteht ein öffentliches, kostenpflichtiges eBay-Angebot "
+            "unter deinem Konto.\n\nTitel: {title}\nPreis: {price} EUR\n"
+            "Kategorie: {category}\nFotos: {images}\nUmgebung: {environment}"
+            "\n\nJetzt wirklich veröffentlichen?"
+        ),
+        "ebay_working": "Wird an eBay übertragen…",
+        "ebay_published": "Angebot veröffentlicht. Angebotsnummer:",
+        "ebay_no_credentials": (
+            "Client-ID, Client-Secret und RuName werden benötigt. "
+            "Client-ID und Secret unter Einstellungen → Marktplatz-APIs."
+        ),
+        "ebay_no_category": (
+            "Es ist noch keine eBay-Kategorie gewählt. Wähle sie im "
+            "eBay-Prüfbereich aus."
+        ),
         "save_image_title": "Produktbild speichern",
         "image_saved": "Produktbild gespeichert:",
         "legal_frame": "Fester Hinweis (wird immer angehängt)",
@@ -127,6 +287,7 @@ TRANSLATIONS = {
         "default_save_path_notice": "Standardpfad gespeichert",
         "config_load_error": "Fehler beim Laden der Konfiguration",
         "config_save_error": "Fehler beim Speichern der Konfiguration",
+        "security_log_error": "Sicherheitsprotokoll nicht beschreibbar",
         "settings_saved": "Einstellungen gespeichert",
         "legal_edit_label": "Privatverkaufs-Hinweis:",
         "legal_reset": "Standardtext wiederherstellen",
@@ -175,6 +336,11 @@ TRANSLATIONS = {
         ),
         "scope_label": "Lieferumfang:",
         "asking_price_label": "Wunschpreis (€):",
+        # Bei Kleinanzeigen ueblich: Verhandlungsbasis oder Festpreis.
+        "price_type_values": "VB|Festpreis|Zu verschenken",
+        "section_condition": "Zustand",
+        "section_scope": "Lieferumfang",
+        "section_price": "Preisvorstellung",
         "price_basis_label": "Preisgrundlage:",
         "price_active": "Aktive Vergleichsangebote",
         "price_sold": "Tatsächlich verkaufte Angebote",
@@ -186,7 +352,10 @@ TRANSLATIONS = {
         "completeness_missing": "Noch zu prüfen:",
         "export_package": "📦 Produktordner exportieren",
         "export_success": "Produktordner erfolgreich erstellt:",
+        "export_images_failed": "Nicht abrufbare Produktbilder:",
         "limit_exceeded": "Zeichenlimit überschritten",
+        "field_title": "Titel",
+        "field_description": "Beschreibung",
         "price_active_notice": (
             "Preisempfehlung basiert auf aktiven Vergleichsangeboten, "
             "nicht auf abgeschlossenen Verkäufen."
@@ -205,6 +374,67 @@ TRANSLATIONS = {
         "previous_image": "◀",
         "next_image": "▶",
         "save_image": "Save image…",
+        "own_images_frame": "Own photos",
+        "add_own_images": "Add…",
+        "own_images_title": "Select your own product photos",
+        "own_images_count": "{count} of {limit} photos ({platform})",
+        "own_images_limit": "Limit reached: {platform} allows {limit} photos.",
+        "own_images_hint": (
+            "On export, location data (GPS) is removed, rotation is corrected "
+            "and the size is adjusted. Uploading still happens manually on "
+            "the platform itself."
+        ),
+        "own_images_no_pillow": (
+            "Pillow is missing: photos are copied unchanged, "
+            "including their location data."
+        ),
+        "own_images_replace_note": (
+            "Own photos replace the manufacturer images in the export."
+        ),
+        "ebay_publish": "🛒 List on eBay…",
+        "ebay_publish_title": "List the offer on eBay",
+        "ebay_consent_frame": "1. Access to your eBay account",
+        "ebay_consent_missing": "No consent granted yet.",
+        "ebay_consent_present": "Consent is in place.",
+        "ebay_consent_start": "Grant access in the browser…",
+        "ebay_consent_paste": "Paste the address after consenting:",
+        "ebay_consent_save": "Save consent",
+        "ebay_consent_saved": "Consent saved.",
+        "ebay_consent_hint": (
+            "The browser opens the eBay page. After you consent, eBay "
+            "redirects to your RuName address — copy the complete address "
+            "from the address bar to here."
+        ),
+        "ebay_runame_label": "RuName (redirect URL name):",
+        "ebay_policies_frame": "2. Policies and location",
+        "ebay_policy_fulfillment": "Shipping:",
+        "ebay_policy_payment": "Payment:",
+        "ebay_policy_return": "Returns:",
+        "ebay_policies_load": "Load policies",
+        "ebay_postal_code": "Postal code:",
+        "ebay_country": "Country:",
+        "ebay_offer_frame": "3. Offer",
+        "ebay_quantity": "Quantity:",
+        "ebay_check": "Check details",
+        "ebay_publish_action": "Create and publish offer",
+        "ebay_publish_missing": "Still missing:",
+        "dialog_close": "Close",
+        "ebay_ready": "All required details are present.",
+        "ebay_confirm": (
+            "This creates a public eBay listing under your account that may "
+            "incur fees.\n\nTitle: {title}\nPrice: {price} EUR\n"
+            "Category: {category}\nPhotos: {images}\nEnvironment: {environment}"
+            "\n\nReally publish now?"
+        ),
+        "ebay_working": "Sending to eBay…",
+        "ebay_published": "Offer published. Listing number:",
+        "ebay_no_credentials": (
+            "Client ID, client secret and RuName are required. "
+            "Client ID and secret under Settings → Marketplace APIs."
+        ),
+        "ebay_no_category": (
+            "No eBay category selected yet. Pick one in the eBay check area."
+        ),
         "save_image_title": "Save product image",
         "image_saved": "Product image saved:",
         "legal_frame": "Mandatory notice (always appended)",
@@ -273,6 +503,7 @@ TRANSLATIONS = {
         "default_save_path_notice": "Default path saved",
         "config_load_error": "Error loading configuration",
         "config_save_error": "Error saving configuration",
+        "security_log_error": "Security log is not writable",
         "settings_saved": "Settings saved",
         "legal_edit_label": "Private-sale notice:",
         "legal_reset": "Restore default text",
@@ -320,6 +551,10 @@ TRANSLATIONS = {
         ),
         "scope_label": "Included items:",
         "asking_price_label": "Asking price (€):",
+        "price_type_values": "Negotiable|Fixed price|Free to a good home",
+        "section_condition": "Condition",
+        "section_scope": "Included",
+        "section_price": "Asking price",
         "price_basis_label": "Price basis:",
         "price_active": "Active comparison listings",
         "price_sold": "Actually sold listings",
@@ -331,7 +566,10 @@ TRANSLATIONS = {
         "completeness_missing": "Still to review:",
         "export_package": "📦 Export product folder",
         "export_success": "Product folder created:",
+        "export_images_failed": "Product images that could not be fetched:",
         "limit_exceeded": "Character limit exceeded",
+        "field_title": "Title",
+        "field_description": "Description",
         "price_active_notice": (
             "The price suggestion is based on active comparison listings, "
             "not completed sales."
@@ -344,13 +582,15 @@ TRANSLATIONS = {
 class ProductGenerator:
     """Backend für Produktverwaltung"""
     
-    def __init__(self, products_file="products.json", output_dir="product_listings"):
-        self.products_file = products_file
-        self.output_dir = output_dir
+    def __init__(self, products_file=None, output_dir=None):
+        # Absolute Vorgaben: das installierte Konsolenskript startet in einem
+        # beliebigen Arbeitsverzeichnis und fände relative Pfade sonst nie.
+        self.products_file = Path(products_file or default_products_file())
+        self.output_dir = Path(output_dir or default_output_dir())
         self.products = []
         
         # Output-Verzeichnis erstellen
-        Path(self.output_dir).mkdir(exist_ok=True)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Produkte laden
         self.load_products()
@@ -435,25 +675,6 @@ class ProductGenerator:
         
         return results
     
-    def generate_listing(
-        self, product_variant, language="de", description_override=None,
-        legal_clause=WARRANTY_CLAUSE
-    ):
-        """Generiert die komplette Produktliste"""
-        description = product_variant['description']
-        if description_override is not None:
-            description = description_override.strip()
-        elif isinstance(description, dict):
-            description = description.get(language, description.get('de', ''))
-
-        source_url = product_variant.get("source_url", "")
-        source_label = "Quelle" if language == "de" else "Source"
-        source_line = f"\n\n{source_label}: {source_url}" if source_url else ""
-        return (
-            f"{description.rstrip()}{source_line}\n\n---\n\n"
-            f"{legal_clause.strip()}\n"
-        )
-
     @staticmethod
     def build_sales_draft(product_name, raw_description, language="de"):
         """Formt gefundene Fakten zu einem prüfbaren Verkaufsbeitrag."""
@@ -701,33 +922,36 @@ class ProductGenerator:
         )
         return f"{translated_label}: {translated_value}"
     
-    def save_listing(self, listing, product_name):
-        """Speichert die Liste als Textdatei"""
-        filename = product_name.replace('/', '_').replace('\\', '_').replace(':', '')
-        filepath = Path(self.output_dir) / f"{filename}.txt"
-        
+    def save_listing(self, listing, product_name, output_dir=None):
+        """Speichert die Liste als Textdatei, ohne vorhandene zu überschreiben.
+
+        Gemeinsamer Schreibpfad für den Backend-Export und die Oberfläche.
+        """
+        directory = Path(output_dir or self.output_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        stem = safe_filename(product_name)
+        filepath = directory / f"{stem}.txt"
+
         counter = 1
-        original_path = filepath
         while filepath.exists():
-            name_parts = original_path.stem.rsplit('_', 1)
-            if name_parts[-1].isdigit():
-                base_name = name_parts[0]
-            else:
-                base_name = original_path.stem
-            filepath = Path(self.output_dir) / f"{base_name}_{counter}.txt"
+            filepath = directory / f"{stem}_{counter}.txt"
             counter += 1
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(listing)
-        
+
+        filepath.write_text(listing, encoding='utf-8')
         return filepath
 
 
 class ProductGeneratorGUI:
     """GUI für den Produktgenerator"""
 
+    # Tab-übergreifend geteilt; Zugriffe laufen aus Netzwerk-Threads.
     _search_cache = {}
+    _search_cache_lock = threading.Lock()
     _search_cache_ttl = 15 * 60
+    # Lief eine Quelle auf einen Fehler, wird kurz gehalten und bald erneut
+    # gefragt; ein leeres Ergebnis wird gar nicht gespeichert.
+    _search_cache_partial_ttl = 90
+    _search_cache_max_entries = 128
     
     def __init__(
         self, root, embedded=False, close_callback=None, title_callback=None,
@@ -765,6 +989,11 @@ class ProductGeneratorGUI:
         self._ebay_access_token_expires = 0
         self._ebay_result_metadata = {}
         self._market_result_metadata = {}
+        self.ebay_ru_name = str(config.get('ebay_ru_name', ''))
+        self.ebay_postal_code = str(config.get('ebay_postal_code', ''))
+        self.ebay_country = str(config.get('ebay_country', 'DE'))
+        self.ebay_policy_ids = {}
+        self._ebay_policy_entries = {}
         self.ebay_environment = config.get('ebay_environment', 'production')
         if self.ebay_environment not in ('production', 'sandbox'):
             self.ebay_environment = 'production'
@@ -777,7 +1006,7 @@ class ProductGeneratorGUI:
         self.legal_clause = str(
             config.get('legal_clause', WARRANTY_CLAUSE)
         ).strip() or WARRANTY_CLAUSE
-        project_output = str(Path(__file__).resolve().parent / "product_listings")
+        project_output = str(default_output_dir())
         self.save_path = config.get('save_path', project_output)
         if not os.path.exists(self.save_path):
             Path(project_output).mkdir(parents=True, exist_ok=True)
@@ -792,11 +1021,7 @@ class ProductGeneratorGUI:
         self.ebay_categories = []
         self.ebay_aspects = []
         self.ebay_aspect_values = {}
-        data_root = Path(
-            os.environ.get('LOCALAPPDATA')
-            or (Path.home() / '.local' / 'share')
-        ) / 'eBay-Kleinanzeigen-Creationtool'
-        self.listing_store = ListingStore(data_root / 'listings.db')
+        self.listing_store = ListingStore(user_data_dir() / 'listings.db')
         self.product_record_id = ''
         self.current_platform = 'kleinanzeigen'
         self.platform_drafts = {}
@@ -812,11 +1037,20 @@ class ProductGeneratorGUI:
             self.create_menu()
         self.setup_ui()
 
-    def detect_system_language(self):
-        language, _ = locale.getdefaultlocale()
-        if language and language.startswith('en'):
-            return 'en'
-        return 'de'
+    @staticmethod
+    def detect_system_language():
+        """Ermittelt die Oberflächensprache ohne das entfernte
+        ``locale.getdefaultlocale``."""
+        try:
+            language = locale.getlocale()[0] or ''
+        except (TypeError, ValueError):
+            language = ''
+        if not language:
+            for name in ('LC_ALL', 'LC_MESSAGES', 'LANG', 'LANGUAGE'):
+                language = os.environ.get(name, '')
+                if language:
+                    break
+        return 'en' if language.casefold().startswith('en') else 'de'
 
     def detect_dpi_scaling(self):
         try:
@@ -834,7 +1068,9 @@ class ProductGeneratorGUI:
 
     def create_menu(self):
         trans = TRANSLATIONS[self.language]
-        self.menubar = tk.Menu(self.root)
+        # Ohne tearoff=0 liegt unter Windows ein unsichtbarer Tearoff-Eintrag
+        # auf Index 0; jedes entryconfig(0, label=…) scheitert dann.
+        self.menubar = tk.Menu(self.root, tearoff=0)
         self.settings_menu = tk.Menu(self.menubar, tearoff=0)
         self.settings_menu.add_command(
             label=trans['menu_change_save_path'],
@@ -864,6 +1100,9 @@ class ProductGeneratorGUI:
                 'save_path': self.save_path,
                 'legal_clause': self.legal_clause,
                 'ebay_environment': self.ebay_environment,
+                'ebay_ru_name': self.ebay_ru_name,
+                'ebay_postal_code': self.ebay_postal_code,
+                'ebay_country': self.ebay_country,
                 'restore_session': self.restore_session_enabled,
                 'clear_session_on_exit': self.clear_session_on_exit,
                 'providers': {
@@ -945,8 +1184,13 @@ class ProductGeneratorGUI:
             'outcome': 'success' if outcome == 'success' else 'failed',
         }
         path = Path.home() / ".eBayCreationToolSecurity.log"
-        with open(path, 'a', encoding='utf-8') as handle:
-            handle.write(json.dumps(record, ensure_ascii=True) + '\n')
+        try:
+            with open(path, 'a', encoding='utf-8') as handle:
+                handle.write(json.dumps(record, ensure_ascii=True) + '\n')
+        except OSError:
+            # Ein nicht schreibbares Protokoll darf die auslösende Aktion
+            # (Verbindungstest, Secret-Löschung) nicht abbrechen.
+            print(TRANSLATIONS['de']['security_log_error'])
     
     def setup_ui(self):
         """Erstellt die Benutzeroberfläche"""
@@ -1093,11 +1337,15 @@ class ProductGeneratorGUI:
         )
         self.scope_var = tk.StringVar()
         self.asking_price_var = tk.StringVar()
+        self.price_type_var = tk.StringVar(
+            value=trans['price_type_values'].split('|')[0]
+        )
         self.price_basis_var = tk.StringVar(value='active')
+        self.ebay_quantity_var = tk.StringVar(value='1')
         self.price_basis_display_var = tk.StringVar(
             value=trans['price_active']
         )
-        for column in range(7):
+        for column in range(8):
             assistant_fields.columnconfigure(
                 column, weight=1 if column in (1, 3) else 0
             )
@@ -1126,6 +1374,14 @@ class ProductGeneratorGUI:
             assistant_fields, textvariable=self.asking_price_var, width=10
         )
         self.asking_price_entry.grid(row=0, column=5, sticky=tk.W)
+        self.price_type_combo = ttk.Combobox(
+            assistant_fields,
+            textvariable=self.price_type_var,
+            values=trans['price_type_values'].split('|'),
+            state='readonly',
+            width=14,
+        )
+        self.price_type_combo.grid(row=0, column=6, sticky=tk.W, padx=(4, 0))
         self.price_basis_combo = ttk.Combobox(
             assistant_fields,
             textvariable=self.price_basis_display_var,
@@ -1133,7 +1389,7 @@ class ProductGeneratorGUI:
             state='readonly',
             width=8,
         )
-        self.price_basis_combo.grid(row=0, column=6, sticky=tk.E, padx=(8, 0))
+        self.price_basis_combo.grid(row=0, column=7, sticky=tk.E, padx=(8, 0))
 
         assistant_actions = ttk.Frame(self.assistant_frame)
         assistant_actions.pack(fill=tk.X, pady=(6, 0))
@@ -1306,11 +1562,56 @@ class ProductGeneratorGUI:
             state=tk.DISABLED,
         )
         self.save_image_button.pack(fill=tk.X, padx=6, pady=(0, 6))
+        # Eigene Fotos: bei Kleinanzeigen und eBay laedt man sie selbst hoch,
+        # das Werkzeug bereitet sie nur vollstaendig vor.
+        self.own_images_frame = ttk.LabelFrame(
+            self.cover_panel, text=trans['own_images_frame'], padding=4
+        )
+        self.own_images_list = tk.Listbox(
+            self.own_images_frame, height=4, exportselection=False,
+            activestyle='none',
+        )
+        self.own_images_list.pack(fill=tk.BOTH, expand=True)
+        self.own_images_list.bind(
+            '<<ListboxSelect>>', self.on_own_image_selected
+        )
+        own_image_buttons = ttk.Frame(self.own_images_frame)
+        own_image_buttons.pack(fill=tk.X, pady=(4, 0))
+        self.add_own_images_button = ttk.Button(
+            own_image_buttons, text=trans['add_own_images'],
+            command=self.add_own_images,
+        )
+        self.add_own_images_button.pack(side=tk.LEFT)
+        self.move_own_image_up_button = ttk.Button(
+            own_image_buttons, text='▲', width=3,
+            command=lambda: self.move_own_image(-1),
+        )
+        self.move_own_image_up_button.pack(side=tk.LEFT, padx=(4, 0))
+        self.move_own_image_down_button = ttk.Button(
+            own_image_buttons, text='▼', width=3,
+            command=lambda: self.move_own_image(1),
+        )
+        self.move_own_image_down_button.pack(side=tk.LEFT, padx=(2, 0))
+        self.remove_own_image_button = ttk.Button(
+            own_image_buttons, text='✕', width=3,
+            command=self.remove_own_image,
+        )
+        self.remove_own_image_button.pack(side=tk.LEFT, padx=(2, 0))
+        self.own_images_hint_var = tk.StringVar()
+        ttk.Label(
+            self.own_images_frame, textvariable=self.own_images_hint_var,
+            foreground='#555555', wraplength=220, justify=tk.LEFT,
+        ).pack(fill=tk.X, pady=(4, 0))
+        self.own_images = []
+
         # Die Bedienelemente werden zuerst vom unteren Rand reserviert.
         # Dadurch kann ein großes Bild sie in kleinen Fenstern nicht verdrängen.
         self.product_image_label.pack_forget()
         self.image_controls.pack_forget()
         self.save_image_button.pack_forget()
+        self.own_images_frame.pack(
+            side=tk.BOTTOM, fill=tk.X, padx=6, pady=(0, 6)
+        )
         self.save_image_button.pack(
             side=tk.BOTTOM, fill=tk.X, padx=6, pady=(0, 6)
         )
@@ -1786,6 +2087,13 @@ class ProductGeneratorGUI:
                     or stored_state.get('asking_price', '')
                 )
             )
+            self.price_type_var.set(
+                variant.get('price_type')
+                or stored_state.get('price_type')
+                or TRANSLATIONS[self.language][
+                    'price_type_values'
+                ].split('|')[0]
+            )
             self.price_basis_var.set(
                 stored_state.get('price_basis', 'active')
             )
@@ -1818,6 +2126,7 @@ class ProductGeneratorGUI:
         self.update_listing_counters()
         self.update_price_summary()
         self.update_listing_completeness()
+        self.refresh_own_images()
 
     def strip_generated_legal(self, text):
         marker = '\n\n---\n\n' + self.legal_clause
@@ -1859,7 +2168,9 @@ class ProductGeneratorGUI:
                 continue
             addition = len(block)
             if used + addition > available:
-                continue
+                # Abbrechen statt überspringen: ein übersprungener Block würde
+                # den Text in der Mitte auftrennen und Inhalte verfälschen.
+                break
             selected.append(block)
             used += addition
         return ''.join(selected).strip()
@@ -1880,6 +2191,8 @@ class ProductGeneratorGUI:
         self.save_visible_platform_draft()
         self.current_platform = wanted
         self.load_platform_draft(wanted)
+        # Die Bildgrenze haengt an der Plattform.
+        self.refresh_own_images()
 
     def save_visible_platform_draft(self):
         if (
@@ -1941,19 +2254,140 @@ class ProductGeneratorGUI:
             self.preview_text.get('1.0', tk.END).strip()
             if body is None else str(body).strip()
         )
+        trans = TRANSLATIONS[self.language]
         errors = []
         if not title:
-            errors.append('Titel')
+            errors.append(trans['field_title'])
         if len(title) > profile.title_limit:
             errors.append(
-                f"Titel {len(title)}/{profile.title_limit}"
+                f"{trans['field_title']} {len(title)}/{profile.title_limit}"
             )
         full = self.full_platform_description(body)
         if len(full) > profile.description_limit:
             errors.append(
-                f"Beschreibung {len(full)}/{profile.description_limit}"
+                f"{trans['field_description']} "
+                f"{len(full)}/{profile.description_limit}"
             )
         return errors
+
+    @staticmethod
+    def parse_price(value):
+        """Liest deutsche und englische Preisschreibweisen.
+
+        Erkennt „1.234,56“, „1,234.56“, „1234,56“ und „1234.56“. Gibt bei
+        unlesbaren Eingaben ``None`` zurück.
+        """
+        text = re.sub(r'[^\d.,-]', '', str(value or '')).strip()
+        if not text:
+            return None
+        last_comma = text.rfind(',')
+        last_dot = text.rfind('.')
+        if last_comma > last_dot:
+            # Komma steht hinten: es ist das Dezimaltrennzeichen.
+            text = text.replace('.', '').replace(',', '.')
+        elif last_dot > last_comma:
+            text = text.replace(',', '')
+        else:
+            text = text.replace(',', '').replace('.', '')
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def format_price(amount):
+        """Formatiert einen Betrag in deutscher Schreibweise."""
+        return f"{amount:,.2f}".replace(',', '\x00').replace(
+            '.', ','
+        ).replace('\x00', '.')
+
+    @staticmethod
+    def scope_items(scope):
+        """Zerlegt eine Lieferumfangs-Eingabe in einzelne Stichpunkte."""
+        parts = re.split(r'[;\n]|,(?![^(]*\))', str(scope or ''))
+        items = []
+        for part in parts:
+            clean = part.strip().strip('*•- ').strip()
+            clean = re.sub(r'^\[(.*)\]$', r'\1', clean).strip()
+            if clean and clean not in items:
+                items.append(clean)
+        return items
+
+    @staticmethod
+    def section_body(body, *titles):
+        """Findet einen ``### Titel``-Abschnitt samt seinem Inhalt."""
+        names = '|'.join(re.escape(title) for title in titles)
+        return re.compile(
+            rf'(?m)^###[ \t]+(?:{names})[ \t]*$\n(?P<content>.*?)'
+            r'(?=^###[ \t]|\Z)',
+            re.DOTALL,
+        ).search(body)
+
+    @classmethod
+    def replace_section(cls, body, titles, content):
+        """Ersetzt den Inhalt eines Abschnitts; ``None`` wenn er fehlt."""
+        match = cls.section_body(body, *titles)
+        if not match:
+            return None
+        replacement = f"### {titles[0]}\n\n{content.strip()}\n\n"
+        return body[:match.start()] + replacement + body[match.end():]
+
+    @classmethod
+    def drop_section(cls, body, *titles):
+        match = cls.section_body(body, *titles)
+        if not match:
+            return body
+        return body[:match.start()] + body[match.end():]
+
+    @staticmethod
+    def strip_condition_placeholders(body):
+        """Entfernt die Auswahlsätze zum Zustand.
+
+        Sobald der Zustand konkret angegeben ist, stehen sie doppelt im Text.
+        Erkennbar sind sie am fett gesetzten ``**[…]``; die eckigen Klammern
+        im Lieferumfang sind bewusst nicht fett und bleiben erhalten.
+        """
+        paragraphs = re.split(r'\n\s*\n', body)
+        return '\n\n'.join(
+            paragraph for paragraph in paragraphs if '**[' not in paragraph
+        )
+
+    @staticmethod
+    def strip_review_hint(body):
+        """Nimmt den Prüfhinweis weg, wenn keine Platzhalter mehr da sind."""
+        if '[' in re.sub(r'^\s*\*\(.*?\)\*\s*$', '', body, flags=re.M):
+            return body
+        return re.sub(
+            r'(?m)^\s*\*\((?:Nicht Zutreffendes|Please remove)[^\n]*\)\*\s*$\n?',
+            '', body,
+        )
+
+    @staticmethod
+    def split_closing(body):
+        """Trennt den Schlusssatz ab, damit er nicht in einen Abschnitt rutscht.
+
+        Ohne diese Trennung wuerde der letzte ``###``-Abschnitt den Satz beim
+        naechsten Uebernehmen mitverschlucken.
+        """
+        match = re.search(
+            r'\n\s*\n((?:Bei Fragen|Feel free)[^\n]*)\s*$', body
+        )
+        if match:
+            return body[:match.start()].rstrip(), match.group(1).strip()
+        return body.rstrip(), ''
+
+    def assistant_price_text(self, amount):
+        """Formatiert den Preis inklusive VB- beziehungsweise Festpreis-Zusatz."""
+        price_type = self.price_type_var.get().strip()
+        free = TRANSLATIONS[self.language]['price_type_values'].split('|')[2]
+        if price_type == free:
+            return price_type
+        suffix = f" {price_type}" if price_type else ''
+        formatted = (
+            f"{amount:,.2f}" if self.language == 'en'
+            else self.format_price(amount)
+        )
+        return f"{formatted} €{suffix}"
 
     def apply_assistant_details(self):
         if not self.selected_variant or not self.product_record_id:
@@ -1962,69 +2396,101 @@ class ProductGeneratorGUI:
         trans = TRANSLATIONS[self.language]
         unselected = trans['condition_values'].split('|')[0]
         condition = self.condition_var.get().strip()
+        if condition == unselected:
+            condition = ''
         scope = self.scope_var.get().strip()
         price = self.asking_price_var.get().strip()
-        lines = []
-        if condition and condition != unselected:
-            lines.append(
-                f"* {'Zustand' if self.language == 'de' else 'Condition'}: "
-                f"{condition}"
-            )
-        if scope:
-            lines.append(
-                f"* {'Lieferumfang' if self.language == 'de' else 'Included'}: "
-                f"{scope}"
-            )
+        price_text = ''
         if price:
-            normalized_price = price.replace(',', '.')
-            try:
-                float(normalized_price)
-            except ValueError:
+            amount = self.parse_price(price)
+            if amount is None:
                 messagebox.showwarning(
                     trans['assistant_frame'],
                     trans['asking_price_label'],
                 )
                 return
-            lines.append(
-                f"* {'Preisvorstellung' if self.language == 'de' else 'Asking price'}: "
-                f"{price.replace('.', ',')} €"
-            )
-        heading = (
-            '### Angaben zum angebotenen Artikel'
-            if self.language == 'de'
-            else '### Details of the offered item'
-        )
-        pattern = (
-            r'\n*### (?:Angaben zum angebotenen Artikel|'
-            r'Details of the offered item)\n.*?(?=\n### |\Z)'
-        )
+            price_text = self.assistant_price_text(amount)
+
+        items = self.scope_items(scope)
         for platform, draft in self.platform_drafts.items():
-            body = re.sub(
-                pattern, '', draft['description'],
-                flags=re.DOTALL,
-            ).rstrip()
-            if lines:
-                body += f"\n\n{heading}\n\n" + '\n'.join(lines)
+            body = self.merge_assistant_details(
+                draft['description'], condition, items, price_text
+            )
             if platform == 'ebay_mobile':
                 body = self.mobile_draft(body)
             draft['description'] = body
             self.persist_platform_draft(platform, draft)
-        self.selected_variant['listing_condition'] = (
-            '' if condition == unselected else condition
-        )
+        self.selected_variant['listing_condition'] = condition
         self.selected_variant['listing_scope'] = scope
         self.selected_variant['asking_price'] = price
+        self.selected_variant['price_type'] = self.price_type_var.get()
         self.listing_store.update_product_state(
             self.product_record_id,
             {
-                'condition': self.selected_variant['listing_condition'],
+                'condition': condition,
                 'scope': scope,
                 'asking_price': price,
+                'price_type': self.price_type_var.get(),
                 'price_basis': self.price_basis_var.get(),
             },
         )
         self.load_platform_draft(self.current_platform)
         self.update_listing_completeness()
+
+    def merge_assistant_details(self, body, condition, items, price_text):
+        """Führt Assistenten-Angaben in die vorhandenen Abschnitte ein.
+
+        Die Angaben landen bewusst nicht in einem eigenen Anhang: Zustand und
+        Lieferumfang stehen bereits als Abschnitt im Entwurf und waeren sonst
+        doppelt vorhanden.
+        """
+        trans = TRANSLATIONS[self.language]
+        both = (TRANSLATIONS['de'], TRANSLATIONS['en'])
+        condition_titles = [text['section_condition'] for text in both]
+        scope_titles = [text['section_scope'] for text in both]
+        price_titles = [text['section_price'] for text in both]
+        # Frueher wurden alle Angaben an einen eigenen Abschnitt gehaengt;
+        # bestehende Entwuerfe werden davon befreit.
+        body = self.drop_section(
+            body,
+            'Angaben zum angebotenen Artikel',
+            'Details of the offered item',
+        )
+        body, closing = self.split_closing(body)
+
+        def apply_section(text, key, titles, content):
+            updated = self.replace_section(
+                text, [trans[key]] + titles, content
+            )
+            if updated is not None:
+                return updated
+            return f"{text.rstrip()}\n\n### {trans[key]}\n\n{content}"
+
+        if condition:
+            body = self.strip_condition_placeholders(body)
+            body = apply_section(
+                body, 'section_condition', condition_titles, condition
+            )
+        else:
+            body = self.drop_section(body, *condition_titles)
+
+        if items:
+            body = apply_section(
+                body, 'section_scope', scope_titles,
+                '\n'.join(f"* {item}" for item in items),
+            )
+
+        if price_text:
+            body = apply_section(
+                body, 'section_price', price_titles, price_text
+            )
+        else:
+            body = self.drop_section(body, *price_titles)
+
+        body = self.strip_review_hint(body)
+        if closing:
+            body = f"{body.rstrip()}\n\n{closing}"
+        return re.sub(r'\n{3,}', '\n\n', body).strip()
 
     def persist_platform_draft(self, platform, draft):
         self.listing_store.save_draft(
@@ -2365,7 +2831,7 @@ class ProductGeneratorGUI:
             )
             status = (
                 trans['ebay_complete'] if value
-                else trans['ebay_missing'] if aspect['required'] else ''
+                else trans['ebay_publish_missing'] if aspect['required'] else ''
             )
             self.ebay_aspect_tree.insert(
                 '', tk.END, iid=str(index),
@@ -2602,6 +3068,128 @@ class ProductGeneratorGUI:
             )
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def own_image_limit(self):
+        """Bildgrenze der aktuell bearbeiteten Plattform."""
+        return PLATFORM_IMAGE_LIMITS.get(self.current_platform, 20)
+
+    def refresh_own_images(self):
+        """Liest die eigenen Fotos aus der Produktakte in die Liste."""
+        if not hasattr(self, 'own_images_list'):
+            return
+        trans = TRANSLATIONS[self.language]
+        self.own_images = (
+            self.listing_store.images(self.product_record_id, own_only=True)
+            if self.product_record_id else []
+        )
+        selection = self.own_images_list.curselection()
+        self.own_images_list.delete(0, tk.END)
+        for position, image in enumerate(self.own_images, 1):
+            name = Path(image['path']).name
+            missing = '' if Path(image['path']).is_file() else ' ⚠'
+            self.own_images_list.insert(tk.END, f"{position:02d}  {name}{missing}")
+        if selection and selection[0] < len(self.own_images):
+            self.own_images_list.selection_set(selection[0])
+        limit = self.own_image_limit()
+        hint = [
+            trans['own_images_count'].format(
+                count=len(self.own_images), limit=limit,
+                platform=PLATFORM_PROFILES[self.current_platform].label_de,
+            )
+        ]
+        if self.own_images:
+            hint.append(trans['own_images_replace_note'])
+        hint.append(
+            trans['own_images_hint'] if Image is not None
+            else trans['own_images_no_pillow']
+        )
+        self.own_images_hint_var.set(' '.join(hint))
+
+    def on_own_image_selected(self, event=None):
+        """Zeigt das ausgewählte eigene Foto in der Cover-Spalte."""
+        selection = self.own_images_list.curselection()
+        if not selection or selection[0] >= len(self.own_images):
+            return
+        path = Path(self.own_images[selection[0]]['path'])
+        if not path.is_file() or Image is None:
+            return
+        try:
+            with Image.open(path) as opened:
+                image = ImageOps.exif_transpose(opened).copy()
+        except Exception:
+            return
+        self._image_generation += 1
+        self._product_image_original = image
+        self._product_image_current_url = ''
+        self.render_responsive_cover()
+
+    def add_own_images(self):
+        """Übernimmt eigene Fotos als Dateipfade in die Produktakte."""
+        trans = TRANSLATIONS[self.language]
+        if not self.product_record_id:
+            messagebox.showwarning(
+                trans['no_selection'], trans['no_selection']
+            )
+            return
+        limit = self.own_image_limit()
+        if len(self.own_images) >= limit:
+            messagebox.showwarning(
+                trans['own_images_frame'],
+                trans['own_images_limit'].format(
+                    limit=limit,
+                    platform=PLATFORM_PROFILES[self.current_platform].label_de,
+                ),
+            )
+            return
+        patterns = ' '.join(f'*{suffix}' for suffix in OWN_IMAGE_SUFFIXES)
+        selected = filedialog.askopenfilenames(
+            title=trans['own_images_title'],
+            initialdir=self.save_path,
+            filetypes=[
+                (trans['own_images_frame'], patterns),
+                ("Alle Dateien", "*.*"),
+            ],
+        )
+        free_slots = limit - len(self.own_images)
+        for path in list(selected)[:free_slots]:
+            self.listing_store.add_image(
+                self.product_record_id, path, is_own=True
+            )
+        if len(selected) > free_slots:
+            messagebox.showwarning(
+                trans['own_images_frame'],
+                trans['own_images_limit'].format(
+                    limit=limit,
+                    platform=PLATFORM_PROFILES[self.current_platform].label_de,
+                ),
+            )
+        self.refresh_own_images()
+
+    def move_own_image(self, offset):
+        """Verschiebt ein Foto; das erste ist das Hauptbild."""
+        selection = self.own_images_list.curselection()
+        if not selection:
+            return
+        index = selection[0]
+        target = index + offset
+        if not (0 <= index < len(self.own_images)) or not (
+            0 <= target < len(self.own_images)
+        ):
+            return
+        order = [image['id'] for image in self.own_images]
+        order[index], order[target] = order[target], order[index]
+        self.listing_store.reorder_images(order)
+        self.refresh_own_images()
+        self.own_images_list.selection_clear(0, tk.END)
+        self.own_images_list.selection_set(target)
+
+    def remove_own_image(self):
+        """Entfernt nur den Verweis, niemals die Originaldatei."""
+        selection = self.own_images_list.curselection()
+        if not selection or selection[0] >= len(self.own_images):
+            return
+        self.listing_store.remove_image(self.own_images[selection[0]]['id'])
+        self.refresh_own_images()
 
     def save_current_product_image(self):
         url = self._product_image_current_url
@@ -2894,9 +3482,10 @@ class ProductGeneratorGUI:
 
     def on_language_changed(self, value):
         if value in TRANSLATIONS:
+            previous_language = self.language
             self.language = value
             self.save_config()
-            self.update_ui_language()
+            self.update_ui_language(previous_language)
             if self.language_callback:
                 self.language_callback(value)
             if self.selected_variant is not None:
@@ -2928,8 +3517,9 @@ class ProductGeneratorGUI:
         self.legal_text.config(state=tk.DISABLED)
         self.render_live_preview()
 
-    def update_ui_language(self):
+    def update_ui_language(self, previous_language=None):
         trans = TRANSLATIONS[self.language]
+        previous_language = previous_language or self.language
         if not self.embedded:
             self.root.title(trans['title'])
         self.search_frame.config(text=trans['search_frame'])
@@ -2954,6 +3544,17 @@ class ProductGeneratorGUI:
         self.condition_combo.configure(
             values=trans['condition_values'].split('|')
         )
+        # Die gewaehlte Preisart wandert positionsgleich in die neue Sprache.
+        previous_types = TRANSLATIONS[
+            previous_language
+        ]['price_type_values'].split('|')
+        price_types = trans['price_type_values'].split('|')
+        current_type = self.price_type_var.get()
+        self.price_type_combo.configure(values=price_types)
+        self.price_type_var.set(
+            price_types[previous_types.index(current_type)]
+            if current_type in previous_types else price_types[0]
+        )
         self.price_basis_combo.configure(
             values=(trans['price_active'], trans['price_sold'])
         )
@@ -2969,6 +3570,9 @@ class ProductGeneratorGUI:
         self.previous_image_button.config(text=trans['previous_image'])
         self.next_image_button.config(text=trans['next_image'])
         self.save_image_button.config(text=trans['save_image'])
+        self.own_images_frame.config(text=trans['own_images_frame'])
+        self.add_own_images_button.config(text=trans['add_own_images'])
+        self.refresh_own_images()
         self.legal_frame.config(text=trans['legal_frame'])
         self.provider_frame.config(text=trans['provider_frame'])
         for button, label_key in self.provider_buttons.values():
@@ -2989,6 +3593,59 @@ class ProductGeneratorGUI:
             self.settings_menu.entryconfig(0, label=trans['menu_change_save_path'])
             self.settings_menu.entryconfig(1, label=trans['menu_default_save_path'])
             self.menubar.entryconfig(0, label=trans['menu_settings'])
+
+    @classmethod
+    def cache_seconds_for(cls, results, errors):
+        """Bestimmt, wie lange ein Suchergebnis gelten darf.
+
+        Ein Fehlschlag ist kein Ergebnis: eine blockierte oder gedrosselte
+        Quelle wuerde sonst mitsamt ihrer Fehlermeldung fuer eine Viertelstunde
+        festgeschrieben, und selbst ein Neustart liefert nur den leeren
+        Eintrag aus der Datenbank zurueck. Unvollstaendige Laeufe halten
+        deshalb kurz, leere ueberhaupt nicht.
+        """
+        if not results:
+            return 0
+        if errors:
+            return cls._search_cache_partial_ttl
+        return cls._search_cache_ttl
+
+    @classmethod
+    def _cache_lookup(cls, cache_key):
+        """Liefert einen noch gültigen Cache-Eintrag oder ``None``."""
+        with cls._search_cache_lock:
+            entry = cls._search_cache.get(cache_key)
+            if not entry:
+                return None
+            stored_at, results, errors, ttl = entry
+            if time.monotonic() - stored_at >= ttl:
+                cls._search_cache.pop(cache_key, None)
+                return None
+            return results, errors
+
+    @classmethod
+    def _cache_store(cls, cache_key, results, errors):
+        """Speichert ein Ergebnis und entfernt abgelaufene sowie älteste."""
+        ttl = cls.cache_seconds_for(results, errors)
+        if not ttl:
+            # Auch einen frueheren Treffer verwerfen, sonst bliebe ein
+            # veraltetes Ergebnis stehen, obwohl gerade nichts gefunden wurde.
+            with cls._search_cache_lock:
+                cls._search_cache.pop(cache_key, None)
+            return
+        now = time.monotonic()
+        with cls._search_cache_lock:
+            cls._search_cache[cache_key] = (now, results, errors, ttl)
+            for key, entry in list(cls._search_cache.items()):
+                if now - entry[0] >= entry[3]:
+                    cls._search_cache.pop(key, None)
+            overflow = len(cls._search_cache) - cls._search_cache_max_entries
+            if overflow > 0:
+                oldest = sorted(
+                    cls._search_cache.items(), key=lambda item: item[1][0]
+                )[:overflow]
+                for key, _entry in oldest:
+                    cls._search_cache.pop(key, None)
 
     def _start_scheduled_online_search(self, search_term, request_id):
         self._search_after_id = None
@@ -3023,9 +3680,9 @@ class ProductGeneratorGUI:
             search_term.casefold().strip(),
             tuple(sorted(name for name, active in enabled.items() if active)),
         )
-        cached = self._search_cache.get(cache_key)
-        if cached and time.monotonic() - cached[0] < self._search_cache_ttl:
-            results, errors = cached[1], cached[2]
+        cached = self._cache_lookup(cache_key)
+        if cached:
+            results, errors = cached
             self.root.after(
                 0,
                 lambda: self.apply_online_results(
@@ -3042,9 +3699,7 @@ class ProductGeneratorGUI:
         if persistent:
             results = [tuple(item) for item in persistent.get('results', [])]
             errors = list(persistent.get('errors', []))
-            self._search_cache[cache_key] = (
-                time.monotonic(), results, errors
-            )
+            self._cache_store(cache_key, results, errors)
             self.root.after(
                 0,
                 lambda: self.apply_online_results(
@@ -3124,14 +3779,18 @@ class ProductGeneratorGUI:
                 ),
                 reverse=True,
             )
-        self._search_cache[cache_key] = (
-            time.monotonic(), unique_results, errors
-        )
-        self.listing_store.cache_put(
-            persistent_key,
-            {'results': unique_results, 'errors': errors},
-            self._search_cache_ttl,
-        )
+        self._cache_store(cache_key, unique_results, errors)
+        persistent_ttl = self.cache_seconds_for(unique_results, errors)
+        if persistent_ttl:
+            self.listing_store.cache_put(
+                persistent_key,
+                {'results': unique_results, 'errors': errors},
+                persistent_ttl,
+            )
+        else:
+            # Sonst ueberlebt ein Fehlschlag den Neustart und verhindert
+            # jeden neuen Versuch bis zum Ablauf.
+            self.listing_store.cache_delete(persistent_key)
         self.root.after(
             0,
             lambda: self.apply_online_results(
@@ -3149,7 +3808,7 @@ class ProductGeneratorGUI:
             return None
         host = parsed.netloc.casefold()
         if 'amazon.' in host:
-            return ('Amazon-Link', self.search_amazon)
+            return ('Amazon-Link', self.search_amazon_url_with_fallback)
         if 'geizhals.' in host:
             return ('Geizhals-Link', self.search_comparison_url_with_fallback)
         if 'idealo.' in host:
@@ -3167,6 +3826,65 @@ class ProductGeneratorGUI:
         slug = re.sub(r'-v\d+$', '', slug, flags=re.IGNORECASE)
         slug = re.sub(r'[_-]+', ' ', slug)
         return re.sub(r'\s+', ' ', slug).strip()
+
+    @staticmethod
+    def model_query_from_slug(url):
+        """Leitet aus einem Produkt-Slug einen suchtauglichen Modellnamen ab.
+
+        Der vollstaendige Slug ist als Suchbegriff zu lang und zu werblich.
+        Genommen werden die fuehrenden Woerter bis einschliesslich des ersten
+        Wortes mit einer Ziffer, denn dort steht die Modellnummer:
+        ``QB-X2US3R-Festplattengehaeuse-…`` liefert ``QB-X2US3R``.
+        """
+        path = urllib.parse.unquote(urllib.parse.urlparse(str(url)).path)
+        segments = [segment for segment in path.split('/') if segment]
+        candidates = [
+            segment for segment in segments
+            if segment.lower() not in ('dp', 'gp', 'product', 'b', 'd', 'aw')
+            and not segment.isdigit()
+            and re.search(r'[^\W\d_]', segment)
+            # Die ASIN selbst ist kein Modellname: sie kennt nur Amazon und
+            # als Suchbegriff liefert sie anderswo garantiert nichts.
+            and not re.fullmatch(r'[A-Z0-9]{10}', segment)
+        ]
+        if not candidates:
+            return ''
+        slug = re.sub(
+            r'\.(?:html?|php)$', '', max(candidates, key=len),
+            flags=re.IGNORECASE,
+        )
+        words = [word for word in re.split(r'[_-]+', slug) if word]
+        if not words:
+            return ''
+        for index, word in enumerate(words):
+            if re.search(r'\d', word) and re.search(r'[^\W\d_]', word):
+                return '-'.join(words[:index + 1])
+        return ' '.join(words[:4])
+
+    def search_amazon_url_with_fallback(self, url):
+        """Weicht bei blockierten Amazon-Produktseiten auf andere Quellen aus.
+
+        Die ASIN kennt nur Amazon; die Modellnummer im Slug finden die
+        Vergleichsportale dagegen zuverlaessig.
+        """
+        try:
+            results = self.search_amazon(url)
+            if results:
+                return results
+        except Exception:
+            pass
+        query = self.model_query_from_slug(url)
+        if not query:
+            return []
+        alternatives = []
+        for provider in (
+            self.search_geizhals, self.search_idealo, self.search_wikipedia
+        ):
+            try:
+                alternatives.extend(provider(query))
+            except Exception:
+                continue
+        return self.merge_provider_results([alternatives])
 
     def search_comparison_url_with_fallback(self, url):
         """Nutzt bei blockierten Preisportalen alternative Produktquellen."""
@@ -3389,7 +4107,7 @@ class ProductGeneratorGUI:
             ).strip()
 
             def candidate_score(candidate):
-                title, description, source_url = candidate
+                title, _description, source_url = candidate
                 normalized_title = re.sub(
                     r'\W+', ' ', title.lower()
                 ).strip()
@@ -4524,22 +5242,73 @@ class ProductGeneratorGUI:
             self._search_amazon_once, search_term
         )
 
+    @staticmethod
+    def amazon_asin(value):
+        """Liest die ASIN aus einer Amazon-URL oder einer reinen ASIN-Eingabe.
+
+        Die Produktkennung wird ausschliesslich am ``/dp/``- oder
+        ``/gp/product/``-Segment erkannt. Ein optionales Praefix wuerde in
+        einem Slug wie ``…-temperaturgeregelt/dp/B01GSWFOA4`` das zehn Zeichen
+        lange Wortende vor dem Schraegstrich als ASIN missdeuten.
+        """
+        text = str(value or '').strip()
+        marker = re.search(
+            r'/(?:dp|gp/product|gp/aw/d|product)/([A-Za-z0-9]{10})'
+            r'(?![A-Za-z0-9])',
+            text,
+        )
+        if marker:
+            return marker.group(1).upper()
+        if 'amazon.' in text.casefold():
+            # Amazon-Link ohne erkennbares Produktsegment: nicht raten.
+            return ''
+        if re.fullmatch(r'[A-Za-z0-9]{10}', text) and re.search(r'\d', text):
+            return text.upper()
+        return ''
+
+    @classmethod
+    def amazon_search_query(cls, search_term):
+        """Macht aus einer Amazon-URL ohne ASIN einen brauchbaren Suchbegriff.
+
+        Ohne diese Umwandlung wuerde wortwoertlich nach der URL gesucht.
+        """
+        text = str(search_term or '').strip()
+        parsed = urllib.parse.urlparse(text)
+        if parsed.scheme not in ('http', 'https'):
+            return text
+        keywords = urllib.parse.parse_qs(parsed.query).get('k', [''])[0].strip()
+        if keywords:
+            return keywords
+        # Der sprechende Teil steht bei Amazon vorne, nicht im letzten
+        # Segment: /Fantec-QB-X2US3R-Gehaeuse/b/12345
+        segments = [
+            urllib.parse.unquote(segment)
+            for segment in parsed.path.split('/') if segment
+        ]
+        descriptive = [
+            segment for segment in segments
+            if segment.lower() not in ('dp', 'gp', 'product', 'b', 'd', 'aw')
+            and not segment.isdigit()
+            and re.search(r'[^\W\d_]', segment)
+        ]
+        if not descriptive:
+            return ''
+        best = max(descriptive, key=len)
+        best = re.sub(r'\.(?:html?|php)$', '', best, flags=re.IGNORECASE)
+        return re.sub(r'\s+', ' ', re.sub(r'[_-]+', ' ', best)).strip()
+
     def _search_amazon_once(self, search_term):
         """Sucht Amazon.de und extrahiert Fakten aus Produktseiten."""
-        asin_match = re.search(
-            r'(?:/dp/|/gp/product/)?([A-Z0-9]{10})(?:[/?]|$)',
-            search_term.upper(),
-        )
-        if asin_match and (
-            'AMAZON.' in search_term.upper()
-            or re.fullmatch(r'[A-Z0-9]{10}', search_term.strip().upper())
-        ):
-            asin = asin_match.group(1)
+        asin = self.amazon_asin(search_term)
+        if asin:
             source_url = f"https://www.amazon.de/dp/{asin}"
             title, description = self.extract_amazon_product(self.fetch_url(source_url))
             title = self.repair_truncated_amazon_title(title)
             return [(title, description, source_url)] if title else []
 
+        search_term = self.amazon_search_query(search_term)
+        if not search_term:
+            return []
         query = urllib.parse.quote_plus(search_term)
         html = self.fetch_url(f"https://www.amazon.de/s?k={query}")
         self.raise_for_amazon_block(html)
@@ -4836,6 +5605,20 @@ class ProductGeneratorGUI:
         if not address.is_global:
             raise ValueError("Private oder lokale IP-Adressen sind nicht erlaubt")
 
+    @staticmethod
+    def is_product_page_link(href, base_url):
+        """Trennt Produktseiten von Navigation, Filtern und Skriptlinks.
+
+        Kategorie- und Filterlinks wie ``geizhals.de/?fs=…&cat=gehhd`` haben
+        keinen eigenen Pfad; ``javascript:;`` ist ueberhaupt kein Ziel.
+        """
+        if href.casefold().startswith(('javascript:', 'mailto:', '#')):
+            return False
+        parsed = urllib.parse.urlparse(urllib.parse.urljoin(base_url, href))
+        if parsed.scheme not in ('http', 'https'):
+            return False
+        return parsed.path.strip('/') != ''
+
     def search_search_page(self, url, base_url):
         html = self.fetch_url(url)
         lowered = html.lower()
@@ -4855,11 +5638,13 @@ class ProductGeneratorGUI:
 
         for pattern in patterns:
             for match in re.findall(pattern, html, re.IGNORECASE | re.DOTALL):
-                href = match[0]
+                href = html_lib.unescape(match[0]).strip()
                 title = match[1] if len(match) > 1 else ''
                 title_clean = re.sub(r'<[^>]+>', '', title).strip()
                 title_clean = re.sub(r'\s+', ' ', title_clean)
                 if not title_clean or not href:
+                    continue
+                if not self.is_product_page_link(href, base_url):
                     continue
                 if re.search(
                     r'(Geizhals-App|Gesponserte Anzeige|AppStore|Google Play|'
@@ -4889,27 +5674,6 @@ class ProductGeneratorGUI:
             results.append((title, description, full_url))
         return results
 
-    def fetch_online_description(self, url):
-        try:
-            html = self.fetch_url(url)
-        except Exception:
-            return ''
-
-        patterns = [
-            r'<div[^>]*class=["\']?[^"\'>]*(?:product-description|description|product-specs|productDetails|product-detail|description-box)[^"\'>]*["\']?[^>]*>(.*?)</div>',
-            r'<section[^>]*class=["\']?[^"\'>]*(?:description|product-description)[^"\'>]*["\']?[^>]*>(.*?)</section>',
-            r'<p[^>]*>(.*?)</p>'
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
-            if match:
-                text = re.sub(r'<[^>]+>', '', match.group(1))
-                text = html_lib.unescape(text)
-                text = re.sub(r'\s+', ' ', text).strip()
-                if len(text) > 40:
-                    return text
-        return ''
-    
     def save_file(self):
         """Speichert die Produktbeschreibung als Textdatei"""
         trans = TRANSLATIONS[self.language]
@@ -4943,47 +5707,37 @@ class ProductGeneratorGUI:
         # Speichern im separaten Thread um GUI nicht zu blockieren
         def save_async():
             try:
-                # Dateiname sanitieren
                 if self.opened_file_path:
+                    # Eine geöffnete Datei wird bewusst zurückgeschrieben.
                     filepath = Path(self.opened_file_path)
+                    filepath.write_text(listing, encoding='utf-8')
                 else:
-                    filename = (
-                        f"{safe_filename(draft.get('title') or self.selected_variant['name'])}"
+                    name = (
+                        f"{draft.get('title') or self.selected_variant['name']}"
                         f"-{self.current_platform}"
                     )
-                    filepath = Path(self.save_path) / f"{filename}.txt"
-
                     # Neue Beiträge überschreiben keine vorhandenen Dateien.
-                    counter = 1
-                    original_path = filepath
-                    while filepath.exists():
-                        name_parts = original_path.stem.rsplit('_', 1)
-                        if name_parts[-1].isdigit():
-                            base_name = name_parts[0]
-                        else:
-                            base_name = original_path.stem
-                        filepath = (
-                            Path(self.save_path) / f"{base_name}_{counter}.txt"
-                        )
-                        counter += 1
-                
-                # Datei schreiben
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(listing)
-                
+                    filepath = self.generator.save_listing(
+                        listing, name, output_dir=self.save_path
+                    )
+
                 # Status updaten
-                self.root.after(0, lambda: self.status_var.set(f"{trans['saved_success']} {filepath.name}"))
-                self.root.after(0, lambda: messagebox.showinfo(
+                self.root.after(0, lambda path=filepath: self.status_var.set(
+                    f"{trans['saved_success']} {path.name}"
+                ))
+                self.root.after(0, lambda path=filepath: messagebox.showinfo(
                     trans['saved_success'],
-                    f"{trans['saved_success']}\n\n{filepath}"
+                    f"{trans['saved_success']}\n\n{path}"
                 ))
-                
-            except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror(
+
+            except Exception as exc:
+                # Das Lambda läuft erst später im Tk-Event-Loop; der Text muss
+                # deshalb jetzt gebunden werden, nicht die Exception selbst.
+                self.root.after(0, lambda error=str(exc): messagebox.showerror(
                     trans['save_error'],
-                    f"{trans['save_error']}\n\n{str(e)}"
+                    f"{trans['save_error']}\n\n{error}"
                 ))
-                self.root.after(0, lambda: self.status_var.set(f"{trans['save_error']}"))
+                self.root.after(0, lambda: self.status_var.set(trans['save_error']))
         
         thread = threading.Thread(target=save_async, daemon=True)
         thread.start()
@@ -5020,12 +5774,23 @@ class ProductGeneratorGUI:
         if not output_root:
             return
         product_id = self.product_record_id
-        image_urls = list(self.selected_variant.get('image_urls') or [])
+        own_paths = [
+            image['path'] for image in self.own_images
+            if Path(image['path']).is_file()
+        ]
+        # Eigene Fotos schlagen die Herstellerbilder: wer selbst fotografiert
+        # hat, will die Werbebilder nicht im Ordner haben.
+        image_urls = (
+            [] if own_paths
+            else list(self.selected_variant.get('image_urls') or [])
+        )
 
         def worker():
+            failed_images = 0
             try:
                 folder = self.listing_store.export_package(
-                    product_id, output_root
+                    product_id, output_root, images=own_paths,
+                    prepare=prepare_own_image,
                 )
                 for index, url in enumerate(image_urls, 1):
                     try:
@@ -5042,7 +5807,9 @@ class ProductGeneratorGUI:
                         )
                         (folder / name).write_bytes(data)
                     except Exception:
-                        continue
+                        # Einzelne blockierte Bilder brechen den Export nicht
+                        # ab, werden aber am Ende ausgewiesen.
+                        failed_images += 1
             except Exception as exc:
                 self.root.after(
                     0, lambda error=str(exc): messagebox.showerror(
@@ -5050,14 +5817,336 @@ class ProductGeneratorGUI:
                     )
                 )
                 return
+            notice = (
+                f"\n\n{trans['export_images_failed']} {failed_images}"
+                if failed_images else ''
+            )
             self.root.after(
                 0, lambda: messagebox.showinfo(
                     trans['export_package'],
-                    f"{trans['export_success']}\n\n{folder}",
+                    f"{trans['export_success']}\n\n{folder}{notice}",
                 )
             )
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def ebay_client(self):
+        """Erzeugt einen Client mit den gespeicherten Zugangsdaten."""
+        client_id = self.get_secret('ebay_client_id')
+        client_secret = self.get_secret('ebay_client_secret')
+        if not client_id or not client_secret or not self.ebay_ru_name:
+            raise EbayError(TRANSLATIONS[self.language]['ebay_no_credentials'])
+        client = EbayListingClient(
+            client_id=client_id,
+            client_secret=client_secret,
+            environment=self.ebay_environment,
+        )
+        refresh_token = self.get_secret('ebay_refresh_token')
+        if refresh_token:
+            client.tokens.refresh_token = refresh_token
+        return client
+
+    def ebay_draft(self):
+        """Stellt aus dem aktuellen Beitrag ein Angebot zusammen."""
+        variant = self.selected_variant or {}
+        draft = self.platform_drafts.get('ebay', {})
+        amount = self.parse_price(self.asking_price_var.get())
+        return ListingDraft(
+            sku=sku_for(variant.get('name', ''), str(
+                variant.get('ean') or variant.get('gtin') or ''
+            )),
+            title=draft.get('title', '') or variant.get('name', ''),
+            description=self.full_platform_description(
+                draft.get('description', '')
+            ),
+            condition=condition_code(self.condition_var.get()),
+            price='' if amount is None else f"{amount:.2f}",
+            quantity=max(1, int(self.ebay_quantity_var.get() or 1)),
+            category_id=str(variant.get('ebay_category_id', '')),
+            aspects=dict(self.ebay_aspect_values or {}),
+            merchant_location_key=DEFAULT_LOCATION_KEY,
+            fulfillment_policy_id=self.ebay_policy_ids.get('fulfillment', ''),
+            payment_policy_id=self.ebay_policy_ids.get('payment', ''),
+            return_policy_id=self.ebay_policy_ids.get('return', ''),
+            image_urls=[],
+        )
+
+    def open_ebay_publisher(self):
+        """Führt Schritt für Schritt zum offiziell eingestellten Angebot."""
+        trans = TRANSLATIONS[self.language]
+        if not self.selected_variant or not self.product_record_id:
+            messagebox.showwarning(
+                trans['no_selection'], trans['no_selection']
+            )
+            return
+        self.save_visible_platform_draft()
+
+        window = tk.Toplevel(self.root)
+        window.title(trans['ebay_publish_title'])
+        window.transient(self.root.winfo_toplevel())
+        outer = ttk.Frame(window, padding=12)
+        outer.pack(fill=tk.BOTH, expand=True)
+
+        status_var = tk.StringVar()
+
+        def report(message):
+            self.root.after(0, lambda: status_var.set(message))
+
+        def in_thread(action):
+            threading.Thread(target=action, daemon=True).start()
+
+        # --- 1. Einwilligung -------------------------------------------
+        consent = ttk.LabelFrame(
+            outer, text=trans['ebay_consent_frame'], padding=8
+        )
+        consent.pack(fill=tk.X)
+        ttk.Label(
+            consent, text=trans['ebay_consent_hint'],
+            wraplength=520, justify=tk.LEFT, foreground='#555555',
+        ).pack(fill=tk.X)
+        runame_row = ttk.Frame(consent)
+        runame_row.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(
+            runame_row, text=trans['ebay_runame_label'], width=26
+        ).pack(side=tk.LEFT)
+        runame_var = tk.StringVar(value=self.ebay_ru_name)
+        ttk.Entry(runame_row, textvariable=runame_var).pack(
+            side=tk.LEFT, fill=tk.X, expand=True
+        )
+        consent_state = tk.StringVar(
+            value=trans['ebay_consent_present']
+            if self.get_secret('ebay_refresh_token')
+            else trans['ebay_consent_missing']
+        )
+        ttk.Label(consent, textvariable=consent_state).pack(
+            fill=tk.X, pady=(6, 0)
+        )
+
+        def start_consent():
+            self.ebay_ru_name = runame_var.get().strip()
+            self.save_config()
+            try:
+                url = consent_url(
+                    self.get_secret('ebay_client_id'),
+                    self.ebay_ru_name,
+                    self.ebay_environment,
+                )
+            except EbayError as error:
+                report(str(error))
+                return
+            webbrowser.open(url)
+
+        ttk.Button(
+            consent, text=trans['ebay_consent_start'], command=start_consent
+        ).pack(anchor=tk.W, pady=(6, 0))
+        ttk.Label(consent, text=trans['ebay_consent_paste']).pack(
+            anchor=tk.W, pady=(6, 0)
+        )
+        redirect_var = tk.StringVar()
+        ttk.Entry(consent, textvariable=redirect_var).pack(fill=tk.X)
+
+        def save_consent():
+            self.ebay_ru_name = runame_var.get().strip()
+            self.save_config()
+
+            def run():
+                try:
+                    code = authorization_code(redirect_var.get())
+                    client = self.ebay_client()
+                    tokens = client.exchange_code(code, self.ebay_ru_name)
+                    # Nur der Erneuerungstoken wird dauerhaft abgelegt.
+                    self.set_secret('ebay_refresh_token', tokens.refresh_token)
+                    self.audit_security_event('ebay_consent', 'ebay')
+                except Exception as error:
+                    self.audit_security_event(
+                        'ebay_consent', 'ebay', 'failed'
+                    )
+                    report(str(error))
+                    return
+                self.root.after(0, lambda: (
+                    consent_state.set(trans['ebay_consent_present']),
+                    redirect_var.set(''),
+                ))
+                report(trans['ebay_consent_saved'])
+
+            in_thread(run)
+
+        ttk.Button(
+            consent, text=trans['ebay_consent_save'], command=save_consent
+        ).pack(anchor=tk.W, pady=(6, 0))
+
+        # --- 2. Richtlinien und Standort -------------------------------
+        policies = ttk.LabelFrame(
+            outer, text=trans['ebay_policies_frame'], padding=8
+        )
+        policies.pack(fill=tk.X, pady=(10, 0))
+        policy_vars = {}
+        policy_options = {}
+        for row, (kind, label_key) in enumerate((
+            ('fulfillment', 'ebay_policy_fulfillment'),
+            ('payment', 'ebay_policy_payment'),
+            ('return', 'ebay_policy_return'),
+        )):
+            ttk.Label(policies, text=trans[label_key], width=14).grid(
+                row=row, column=0, sticky=tk.W, pady=2
+            )
+            policy_vars[kind] = tk.StringVar()
+            combo = ttk.Combobox(
+                policies, textvariable=policy_vars[kind],
+                state='readonly', width=44,
+            )
+            combo.grid(row=row, column=1, sticky=tk.EW, pady=2)
+            policy_options[kind] = combo
+        policies.columnconfigure(1, weight=1)
+
+        address_row = ttk.Frame(policies)
+        address_row.grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=(6, 0))
+        ttk.Label(address_row, text=trans['ebay_postal_code']).pack(side=tk.LEFT)
+        postal_var = tk.StringVar(value=self.ebay_postal_code)
+        ttk.Entry(address_row, textvariable=postal_var, width=10).pack(
+            side=tk.LEFT, padx=(4, 12)
+        )
+        ttk.Label(address_row, text=trans['ebay_country']).pack(side=tk.LEFT)
+        country_var = tk.StringVar(value=self.ebay_country)
+        ttk.Entry(address_row, textvariable=country_var, width=6).pack(
+            side=tk.LEFT, padx=(4, 0)
+        )
+
+        def load_policies():
+            def run():
+                try:
+                    client = self.ebay_client()
+                    found = client.policies()
+                except Exception as error:
+                    report(str(error))
+                    return
+
+                def apply():
+                    for kind, entries in found.items():
+                        labels = [entry['name'] for entry in entries]
+                        policy_options[kind].configure(values=labels)
+                        self._ebay_policy_entries[kind] = entries
+                        if entries:
+                            policy_vars[kind].set(labels[0])
+                            self.ebay_policy_ids[kind] = entries[0]['id']
+                    status_var.set(trans['ebay_ready'])
+
+                self.root.after(0, apply)
+
+            in_thread(run)
+
+        def on_policy_selected(kind):
+            entries = self._ebay_policy_entries.get(kind, [])
+            index = policy_options[kind].current()
+            if 0 <= index < len(entries):
+                self.ebay_policy_ids[kind] = entries[index]['id']
+
+        for kind, combo in policy_options.items():
+            combo.bind(
+                '<<ComboboxSelected>>',
+                lambda event, name=kind: on_policy_selected(name),
+            )
+        ttk.Button(
+            policies, text=trans['ebay_policies_load'], command=load_policies
+        ).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(6, 0))
+
+        # --- 3. Angebot -------------------------------------------------
+        offer = ttk.LabelFrame(
+            outer, text=trans['ebay_offer_frame'], padding=8
+        )
+        offer.pack(fill=tk.X, pady=(10, 0))
+        quantity_row = ttk.Frame(offer)
+        quantity_row.pack(fill=tk.X)
+        ttk.Label(quantity_row, text=trans['ebay_quantity']).pack(side=tk.LEFT)
+        ttk.Spinbox(
+            quantity_row, from_=1, to=99, width=5,
+            textvariable=self.ebay_quantity_var,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+
+        ttk.Label(
+            outer, textvariable=status_var, wraplength=540,
+            justify=tk.LEFT, foreground='#555555',
+        ).pack(fill=tk.X, pady=(10, 0))
+
+        def check():
+            draft = self.ebay_draft()
+            if not draft.category_id:
+                status_var.set(trans['ebay_no_category'])
+                return None
+            missing = [
+                name for name in draft.missing_fields() if name != 'images'
+            ]
+            if not self.own_images:
+                missing.append('images')
+            status_var.set(
+                f"{trans['ebay_publish_missing']} {', '.join(missing)}"
+                if missing else trans['ebay_ready']
+            )
+            return draft if not missing else None
+
+        def publish():
+            draft = check()
+            if draft is None:
+                return
+            variant = self.selected_variant or {}
+            if not messagebox.askyesno(
+                trans['ebay_publish_title'],
+                trans['ebay_confirm'].format(
+                    title=draft.title,
+                    price=draft.price,
+                    category=variant.get('ebay_category_name', draft.category_id),
+                    images=len(self.own_images),
+                    environment=self.ebay_environment,
+                ),
+                default=messagebox.NO,
+                icon=messagebox.WARNING,
+            ):
+                return
+            photos = [
+                image['path'] for image in self.own_images
+                if Path(image['path']).is_file()
+            ]
+            address = {
+                'postalCode': postal_var.get().strip(),
+                'country': country_var.get().strip().upper() or 'DE',
+            }
+            self.ebay_postal_code = address['postalCode']
+            self.ebay_country = address['country']
+            self.save_config()
+            report(trans['ebay_working'])
+
+            def run():
+                try:
+                    client = self.ebay_client()
+                    draft.image_urls = [
+                        client.upload_picture(path) for path in photos
+                    ]
+                    client.ensure_location(
+                        draft.merchant_location_key, address
+                    )
+                    client.create_inventory_item(draft)
+                    offer_id = client.create_offer(draft)
+                    listing_id = client.publish_offer(offer_id)
+                except Exception as error:
+                    self.audit_security_event('ebay_publish', 'ebay', 'failed')
+                    report(str(error))
+                    return
+                self.audit_security_event('ebay_publish', 'ebay')
+                report(f"{trans['ebay_published']} {listing_id}")
+
+            in_thread(run)
+
+        buttons = ttk.Frame(outer)
+        buttons.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(
+            buttons, text=trans['ebay_check'], command=check
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            buttons, text=trans['ebay_publish_action'], command=publish
+        ).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(
+            buttons, text=trans['dialog_close'], command=window.destroy
+        ).pack(side=tk.RIGHT)
 
     def copy_listing(self):
         """Kopiert den vollständigen Beitrag inklusive Pflichttext."""
@@ -5098,6 +6187,7 @@ class TabbedProductGeneratorGUI:
         self.controllers = {}
         self.retired_tabs = []
         self.tab_counter = 0
+        self._session_fingerprint = None
         self.session_file = Path.home() / ".eBayCreationToolSession.json"
         self.config_file = Path.home() / ".eBayCreationToolConfig.json"
         try:
@@ -5130,26 +6220,40 @@ class TabbedProductGeneratorGUI:
         self.export_button = ttk.Button(
             toolbar,
             text=TRANSLATIONS['de']['export_button'],
-            command=lambda: self.run_on_active('save_file'),
+            command=lambda: self.run_on_active(ProductGeneratorGUI.save_file),
         )
         self.export_button.pack(side=tk.LEFT, padx=(12, 6))
         self.copy_button = ttk.Button(
             toolbar,
             text=TRANSLATIONS['de']['copy_button'],
-            command=lambda: self.run_on_active('copy_listing'),
+            command=lambda: self.run_on_active(
+                ProductGeneratorGUI.copy_listing
+            ),
         )
         self.copy_button.pack(side=tk.LEFT)
         self.package_button = ttk.Button(
             toolbar,
             text=TRANSLATIONS['de']['export_package'],
-            command=lambda: self.run_on_active('export_product_package'),
+            command=lambda: self.run_on_active(
+                ProductGeneratorGUI.export_product_package
+            ),
         )
         self.package_button.pack(side=tk.LEFT, padx=(6, 0))
+        self.ebay_publish_button = ttk.Button(
+            toolbar,
+            text=TRANSLATIONS['de']['ebay_publish'],
+            command=lambda: self.run_on_active(
+                ProductGeneratorGUI.open_ebay_publisher
+            ),
+        )
+        self.ebay_publish_button.pack(side=tk.LEFT, padx=(6, 0))
 
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
 
-        self.menubar = tk.Menu(root)
+        # tearoff=0: sonst verschiebt ein unsichtbarer Eintrag alle Indizes und
+        # update_chrome_language bricht mit TclError ab.
+        self.menubar = tk.Menu(root, tearoff=0)
         self.file_menu = tk.Menu(self.menubar, tearoff=0)
         self.file_menu.add_command(
             label=TRANSLATIONS['de']['menu_new'], command=self.add_tab
@@ -5159,7 +6263,7 @@ class TabbedProductGeneratorGUI:
         )
         self.file_menu.add_command(
             label=TRANSLATIONS['de']['menu_save'],
-            command=lambda: self.run_on_active('save_file'),
+            command=lambda: self.run_on_active(ProductGeneratorGUI.save_file),
         )
         self.file_menu.add_separator()
         self.file_menu.add_command(
@@ -5177,7 +6281,7 @@ class TabbedProductGeneratorGUI:
         self.settings_window = None
         if not self.restore_session_enabled or not self.restore_session():
             self.add_tab()
-        self.root.after(2000, self.autosave_session)
+        self.root.after(SESSION_AUTOSAVE_MS, self.autosave_session)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def update_chrome_language(self, language):
@@ -5188,6 +6292,7 @@ class TabbedProductGeneratorGUI:
         self.export_button.config(text=trans['export_button'])
         self.copy_button.config(text=trans['copy_button'])
         self.package_button.config(text=trans['export_package'])
+        self.ebay_publish_button.config(text=trans['ebay_publish'])
         self.file_menu.entryconfig(0, label=trans['menu_new'])
         self.file_menu.entryconfig(1, label=trans['menu_open'])
         self.file_menu.entryconfig(2, label=trans['menu_save'])
@@ -5293,14 +6398,14 @@ class TabbedProductGeneratorGUI:
             path_buttons,
             text=trans['menu_change_save_path'],
             command=lambda: self._settings_path_action(
-                controller, 'change_save_path'
+                controller, ProductGeneratorGUI.change_save_path
             ),
         ).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(
             path_buttons,
             text=trans['menu_default_save_path'],
             command=lambda: self._settings_path_action(
-                controller, 'set_default_save_path'
+                controller, ProductGeneratorGUI.set_default_save_path
             ),
         ).pack(side=tk.LEFT)
 
@@ -5695,8 +6800,8 @@ class TabbedProductGeneratorGUI:
         if window.winfo_exists():
             window.destroy()
 
-    def _settings_path_action(self, controller, method_name):
-        getattr(controller, method_name)()
+    def _settings_path_action(self, controller, method):
+        method(controller)
         if self.settings_window and self.settings_window.winfo_exists():
             self.settings_window.destroy()
         self.open_settings()
@@ -5706,10 +6811,11 @@ class TabbedProductGeneratorGUI:
         if controller:
             self.update_chrome_language(controller.language)
 
-    def run_on_active(self, method_name):
+    def run_on_active(self, method):
+        """Führt eine Controller-Methode auf dem aktiven Tab aus."""
         controller = self.active_controller()
         if controller:
-            getattr(controller, method_name)()
+            method(controller)
 
     def active_controller(self):
         selected = self.notebook.select()
@@ -5734,6 +6840,7 @@ class TabbedProductGeneratorGUI:
                 'condition': controller.condition_var.get(),
                 'scope': controller.scope_var.get(),
                 'asking_price': controller.asking_price_var.get(),
+                'price_type': controller.price_type_var.get(),
                 'price_basis': controller.price_basis_var.get(),
             })
         return {
@@ -5742,12 +6849,18 @@ class TabbedProductGeneratorGUI:
             'tabs': tabs,
         }
 
-    def save_session(self):
+    def save_session(self, only_if_changed=False):
         if not self.restore_session_enabled:
             self.delete_session_file()
             return
         try:
             data = self.serialize_session()
+            if only_if_changed:
+                # Unveränderte Sitzungen nicht erneut auf die Platte schreiben.
+                fingerprint = json.dumps(data, ensure_ascii=False, sort_keys=True)
+                if fingerprint == self._session_fingerprint:
+                    return
+                self._session_fingerprint = fingerprint
             temporary = self.session_file.with_suffix('.tmp')
             with open(temporary, 'w', encoding='utf-8') as handle:
                 json.dump(data, handle, ensure_ascii=False, indent=2)
@@ -5765,8 +6878,8 @@ class TabbedProductGeneratorGUI:
     def autosave_session(self):
         if not self.root.winfo_exists():
             return
-        self.save_session()
-        self.root.after(2000, self.autosave_session)
+        self.save_session(only_if_changed=True)
+        self.root.after(SESSION_AUTOSAVE_MS, self.autosave_session)
 
     def restore_session(self):
         if not self.restore_session_enabled:
@@ -5839,6 +6952,12 @@ class TabbedProductGeneratorGUI:
                 controller.asking_price_var.set(
                     str(saved.get('asking_price') or '')
                 )
+                controller.price_type_var.set(
+                    saved.get('price_type')
+                    or TRANSLATIONS[controller.language][
+                        'price_type_values'
+                    ].split('|')[0]
+                )
                 controller.price_basis_var.set(
                     saved.get('price_basis', 'active')
                 )
@@ -5864,10 +6983,10 @@ class TabbedProductGeneratorGUI:
         else:
             self.save_session()
         for controller in self.controllers.values():
-            try:
-                controller.listing_store.close()
-            except Exception:
-                pass
+            self.release_controller(controller)
+        for _container, controller in self.retired_tabs:
+            self.release_controller(controller)
+        self.retired_tabs = []
         self.root.destroy()
 
     def add_tab(self):
@@ -5945,6 +7064,9 @@ class TabbedProductGeneratorGUI:
             # Versteckt statt sofort zerstört: bereits laufende Netzwerk-Threads
             # können gefahrlos auslaufen, ohne andere Tabs zu beeinflussen.
             self.retired_tabs.append((container, controller))
+            # Nach der Schonfrist werden Frame und Datenbankverbindung
+            # tatsächlich freigegeben, sonst wachsen beide unbegrenzt.
+            self.root.after(RETIRED_TAB_GRACE_MS, self.dispose_retired_tabs)
         try:
             self.notebook.forget(container)
         except tk.TclError:
@@ -5952,10 +7074,31 @@ class TabbedProductGeneratorGUI:
         if not self.notebook.tabs():
             self.add_tab()
 
+    def dispose_retired_tabs(self):
+        """Gibt Frames und Datenbankverbindungen stillgelegter Tabs frei."""
+        pending, self.retired_tabs = self.retired_tabs, []
+        for container, controller in pending:
+            self.release_controller(controller)
+            try:
+                container.destroy()
+            except tk.TclError:
+                pass
+
+    @staticmethod
+    def release_controller(controller):
+        """Schließt die Produktakte eines Controllers genau einmal."""
+        if getattr(controller, '_store_released', False):
+            return
+        controller._store_released = True
+        try:
+            controller.listing_store.close()
+        except Exception:
+            pass
+
 
 def main():
     root = tk.Tk()
-    app = TabbedProductGeneratorGUI(root)
+    TabbedProductGeneratorGUI(root)
     root.mainloop()
 
 

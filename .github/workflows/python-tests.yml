@@ -13,10 +13,11 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.12", "3.14"]
 
     steps:
@@ -33,9 +34,22 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install .
 
       - name: Compile Python modules
-        run: python -m py_compile product_generator_gui.py __main__.py
+        run: >-
+          python -m py_compile product_generator_gui.py listing_store.py
+          ebay_listing.py __main__.py
+
+      # Ohne X-Server kann Tk kein Fenster oeffnen; die GUI-Tests wuerden sich
+      # sonst stillschweigend ueberspringen statt zu pruefen.
+      - name: Install virtual framebuffer
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
 
       - name: Run tests
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m unittest -v
+
+      - name: Run tests
+        if: runner.os != 'Linux'
         run: python -m unittest -v
 
   dependency-audit:

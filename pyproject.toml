@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ebay-kleinanzeigen-creationtool"
-version = "0.2.0"
+version = "0.3.0"
 description = "GUI-Tool zur Erstellung prüfbarer Produktbeschreibungen für eBay und Kleinanzeigen mit festem Privatverkaufs-Hinweis"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["Pillow>=10.0", "keyring>=25.0"]
 license = {text = "MIT"}
 authors = [
-    {name = "Michael", email = "michael@example.com"}
+    {name = "Michael"}
 ]
 keywords = ["ebay", "kleinanzeigen", "produktbeschreibung", "generator", "gui"]
 classifiers = [
@@ -25,19 +25,24 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "Programming Language :: Python :: 3.15",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/eBay_Kleinanzeigen"
-Repository = "https://github.com/yourusername/eBay_Kleinanzeigen.git"
-"Bug Tracker" = "https://github.com/yourusername/eBay_Kleinanzeigen/issues"
+Homepage = "https://github.com/pcblizzard/eBay-Kleinanzeigen-Creationtool"
+Repository = "https://github.com/pcblizzard/eBay-Kleinanzeigen-Creationtool.git"
+"Bug Tracker" = "https://github.com/pcblizzard/eBay-Kleinanzeigen-Creationtool/issues"
 
 [tool.setuptools]
-py-modules = ["product_generator_gui", "listing_store"]
+py-modules = ["product_generator_gui", "listing_store", "ebay_listing"]
+
+# Die Produktdatenbank muss mitinstalliert werden, sonst startet das
+# Konsolenskript ohne lokale Treffer. Der Pfad wird von
+# product_generator_gui.default_products_file() gesucht.
+[tool.setuptools.data-files]
+"share/ebay-creationtool" = ["products.json"]
 
 [project.scripts]
 ebay-creationtool = "product_generator_gui:main"

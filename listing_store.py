@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import re
 import shutil
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +34,23 @@ PLATFORM_PROFILES = {
         "ebay_mobile", "eBay – mobile Kurzvorschau", 80, 800
     ),
 }
+
+
+def synchronized(method):
+    """Serialisiert Datenbankzugriffe über die geteilte Verbindung.
+
+    Die Verbindung wird mit ``check_same_thread=False`` auch von den
+    Netzwerk-Threads der Oberfläche genutzt. Ohne diese Sperre könnte ein
+    ``commit()`` aus einem Thread die offene Transaktion eines anderen
+    vorzeitig beenden.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 def safe_filename(value: str, fallback: str = "Produkt") -> str:
@@ -79,6 +98,8 @@ class ListingStore:
 
     def __init__(self, database_path):
         self.path = Path(database_path)
+        # Reentrant: export_package und conflicts rufen andere Methoden auf.
+        self._lock = threading.RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(
             self.path, timeout=10, check_same_thread=False
@@ -167,9 +188,11 @@ class ListingStore:
         )
         self.connection.commit()
 
+    @synchronized
     def close(self):
         self.connection.close()
 
+    @synchronized
     def upsert_product(
         self, name: str, identifier: str = "", source_url: str = "",
         state: dict | None = None
@@ -206,6 +229,7 @@ class ListingStore:
         self.connection.commit()
         return product_id
 
+    @synchronized
     def product_state(self, product_id: str) -> dict:
         row = self.connection.execute(
             "SELECT state_json FROM products WHERE id=?", (product_id,)
@@ -217,6 +241,7 @@ class ListingStore:
         except (TypeError, json.JSONDecodeError):
             return {}
 
+    @synchronized
     def update_product_state(self, product_id: str, state: dict):
         self.connection.execute(
             "UPDATE products SET state_json=?, updated_at=? WHERE id=?",
@@ -227,6 +252,7 @@ class ListingStore:
         )
         self.connection.commit()
 
+    @synchronized
     def add_fact(
         self, product_id: str, key: str, value: str, source: str = "",
         source_url: str = "", status: str = "found"
@@ -255,6 +281,7 @@ class ListingStore:
         )
         self.connection.commit()
 
+    @synchronized
     def confirm_fact(self, product_id: str, key: str, value: str):
         with self.connection:
             self.connection.execute(
@@ -272,6 +299,7 @@ class ListingStore:
                 (product_id, key, value),
             )
 
+    @synchronized
     def facts(self, product_id: str) -> list[dict]:
         rows = self.connection.execute(
             """
@@ -286,6 +314,7 @@ class ListingStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    @synchronized
     def conflicts(self, product_id: str) -> dict[str, list[dict]]:
         grouped = {}
         for fact in self.facts(product_id):
@@ -298,6 +327,7 @@ class ListingStore:
             and not any(entry["status"] == "confirmed" for entry in values)
         }
 
+    @synchronized
     def confirmed_values(self, product_id: str) -> dict[str, str]:
         result = {}
         grouped = {}
@@ -315,6 +345,7 @@ class ListingStore:
                 result[key] = values[0]["value"]
         return result
 
+    @synchronized
     def save_draft(
         self, product_id: str, platform: str, title: str, description: str
     ):
@@ -358,6 +389,7 @@ class ListingStore:
                 ),
             )
 
+    @synchronized
     def load_drafts(self, product_id: str) -> dict[str, dict]:
         rows = self.connection.execute(
             "SELECT * FROM drafts WHERE product_id=?", (product_id,)
@@ -371,6 +403,7 @@ class ListingStore:
             for row in rows
         }
 
+    @synchronized
     def add_price(
         self, product_id: str, source: str, amount: float,
         condition: str = "", kind: str = "active", shipping=None,
@@ -406,6 +439,7 @@ class ListingStore:
         )
         self.connection.commit()
 
+    @synchronized
     def price_summary(self, product_id: str, kind="active") -> dict:
         amounts = [
             float(row[0]) for row in self.connection.execute(
@@ -432,6 +466,7 @@ class ListingStore:
             "median": median,
         }
 
+    @synchronized
     def cache_put(self, key: str, payload, ttl_seconds: int):
         now = int(time.time())
         self.connection.execute(
@@ -450,6 +485,14 @@ class ListingStore:
         )
         self.connection.commit()
 
+    @synchronized
+    def cache_delete(self, key: str):
+        self.connection.execute(
+            "DELETE FROM cache WHERE cache_key=?", (key,)
+        )
+        self.connection.commit()
+
+    @synchronized
     def cache_get(self, key: str):
         row = self.connection.execute(
             "SELECT payload_json, expires_at FROM cache WHERE cache_key=?",
@@ -464,9 +507,83 @@ class ListingStore:
             return None
         return json.loads(row["payload_json"])
 
+    @synchronized
+    def add_image(
+        self, product_id: str, path, source_url: str = "", is_own: bool = True
+    ) -> int:
+        """Merkt sich ein Bild als Dateipfad; Inhalte bleiben ausserhalb."""
+        file_path = Path(path)
+        checksum = ""
+        if file_path.is_file():
+            digest = hashlib.sha256()
+            with open(file_path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1 << 20), b""):
+                    digest.update(chunk)
+            checksum = digest.hexdigest()
+        existing = self.connection.execute(
+            """
+            SELECT id FROM images
+            WHERE product_id=? AND (path=? OR (checksum<>'' AND checksum=?))
+            """,
+            (product_id, str(file_path), checksum),
+        ).fetchone()
+        if existing:
+            return int(existing["id"])
+        position = self.connection.execute(
+            "SELECT COALESCE(MAX(position), 0) + 1 FROM images WHERE product_id=?",
+            (product_id,),
+        ).fetchone()[0]
+        cursor = self.connection.execute(
+            """
+            INSERT INTO images(
+                product_id, path, source_url, checksum, position, is_own
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                product_id, str(file_path), source_url, checksum,
+                position, 1 if is_own else 0,
+            ),
+        )
+        self.connection.commit()
+        return int(cursor.lastrowid)
+
+    @synchronized
+    def images(self, product_id: str, own_only: bool = False) -> list[dict]:
+        rows = self.connection.execute(
+            f"""
+            SELECT id, path, source_url, checksum, position, is_own
+            FROM images WHERE product_id=?
+            {'AND is_own=1' if own_only else ''}
+            ORDER BY position, id
+            """,
+            (product_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    @synchronized
+    def remove_image(self, image_id: int):
+        self.connection.execute("DELETE FROM images WHERE id=?", (image_id,))
+        self.connection.commit()
+
+    @synchronized
+    def reorder_images(self, image_ids):
+        """Schreibt die Anzeigereihenfolge; das erste Bild ist das Hauptbild."""
+        with self.connection:
+            for position, image_id in enumerate(image_ids, 1):
+                self.connection.execute(
+                    "UPDATE images SET position=? WHERE id=?",
+                    (position, int(image_id)),
+                )
+
+    @synchronized
     def export_package(
-        self, product_id: str, output_root, images=()
+        self, product_id: str, output_root, images=(), prepare=None
     ) -> Path:
+        """Schreibt Texte, Nachweise und Bilder in einen Produktordner.
+
+        ``prepare(source, target)`` bereitet eigene Fotos auf; ohne Angabe
+        werden sie unveraendert kopiert.
+        """
         product = self.connection.execute(
             "SELECT * FROM products WHERE id=?", (product_id,)
         ).fetchone()
@@ -512,12 +629,21 @@ class ListingStore:
         )
         for index, image_path in enumerate(images, 1):
             source = Path(image_path)
-            if source.is_file():
-                target = folder / (
-                    f"{index:02d}-hauptbild{source.suffix.lower()}"
-                    if index == 1
-                    else f"{index:02d}-produktbild{source.suffix.lower()}"
-                )
-                if source.resolve() != target.resolve():
-                    shutil.copy2(source, target)
+            if not source.is_file():
+                continue
+            suffix = source.suffix.lower()
+            if prepare is not None and suffix not in ('.gif',):
+                # Aufbereitete Fotos werden als JPEG abgelegt; animierte GIFs
+                # blieben dabei auf der Strecke und werden nur kopiert.
+                suffix = '.jpg' if suffix not in ('.png', '.webp') else suffix
+            target = folder / (
+                f"{index:02d}-hauptbild{suffix}" if index == 1
+                else f"{index:02d}-produktbild{suffix}"
+            )
+            if source.resolve() == target.resolve():
+                continue
+            if prepare is None:
+                shutil.copy2(source, target)
+            else:
+                prepare(source, target)
         return folder

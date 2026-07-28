@@ -1,15 +1,23 @@
 import json
 import tempfile
+import tkinter as tk
 import unittest
 import unicodedata
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from pathlib import Path
 
+from PIL import Image
+from PIL.TiffImagePlugin import IFDRational
+
 from product_generator_gui import (
+    OWN_IMAGE_MAX_EDGE,
     ProductGenerator,
     ProductGeneratorGUI,
     SECRET_PLACEHOLDER,
     WARRANTY_CLAUSE,
+    default_products_file,
+    prepare_own_image,
 )
 from listing_store import (
     ListingStore,
@@ -19,44 +27,246 @@ from listing_store import (
 )
 
 
+def display_available():
+    """Prüft, ob Tk ein Fenster öffnen kann.
+
+    Auf Buildservern ohne X-Server ist das nicht der Fall; die betroffenen
+    Tests werden dann übersprungen statt zu scheitern.
+    """
+    try:
+        root = tk.Tk()
+    except Exception:
+        return False
+    root.destroy()
+    return True
+
+
+DISPLAY_AVAILABLE = display_available()
+
+
 class ProductGeneratorTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.generator = ProductGenerator(
-            products_file="products.json", output_dir=self.temp_dir.name
+            products_file=default_products_file(),
+            output_dir=self.temp_dir.name,
         )
 
     def tearDown(self):
         self.temp_dir.cleanup()
 
+    @staticmethod
+    def platform_description(body, legal_clause=WARRANTY_CLAUSE):
+        """Ruft den echten Zusammenbau der Oberfläche ohne Tk-Fenster auf."""
+        stub = SimpleNamespace(legal_clause=legal_clause)
+        return ProductGeneratorGUI.full_platform_description(stub, body)
+
     def test_required_clause_is_always_german_and_at_the_end(self):
-        variant = {
-            "name": "Testprodukt",
-            "description": {"de": "Deutsch", "en": "English"},
-        }
-        listing = self.generator.generate_listing(
-            variant, "en", description_override="Reviewed description"
-        )
+        listing = self.platform_description("Reviewed description")
         self.assertIn("Reviewed description", listing)
         self.assertTrue(listing.rstrip().endswith(WARRANTY_CLAUSE))
 
     def test_custom_legal_clause_replaces_default_at_the_end(self):
-        variant = {"name": "Produkt", "description": "Beschreibung"}
         custom = "Individuell bearbeiteter Privatverkaufs-Hinweis."
-        listing = self.generator.generate_listing(
-            variant, legal_clause=custom
-        )
+        listing = self.platform_description("Beschreibung", legal_clause=custom)
         self.assertTrue(listing.rstrip().endswith(custom))
         self.assertNotIn(WARRANTY_CLAUSE, listing)
 
-    def test_source_url_is_included(self):
-        variant = {
-            "name": "Testprodukt",
-            "description": "Beschreibung",
-            "source_url": "https://example.test/product",
-        }
-        listing = self.generator.generate_listing(variant)
-        self.assertIn("Quelle: https://example.test/product", listing)
+    @staticmethod
+    def assistant(language='de', price_type='VB'):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        gui.language = language
+        gui.price_type_var = SimpleNamespace(get=lambda: price_type)
+        return gui
+
+    def draft_body(self, language='de'):
+        return ProductGeneratorGUI.platform_body_from_draft(
+            ProductGenerator.build_sales_draft(
+                "Fantec QB-X2US3R", "Marke: Fantec", language
+            )
+        )
+
+    def test_assistant_details_replace_the_generated_placeholders(self):
+        gui = self.assistant()
+        merged = gui.merge_assistant_details(
+            self.draft_body(), "Neu",
+            ProductGeneratorGUI.scope_items("Gehäuse, Originalverpackung"),
+            gui.assistant_price_text(50.0),
+        )
+        # Der Zustand steht konkret da, die Auswahlsaetze sind weg.
+        self.assertIn("### Zustand\n\nNeu", merged)
+        self.assertNotIn("**[sehr gutem", merged)
+        self.assertNotIn("Normale Gebrauchsspuren", merged)
+        self.assertNotIn("Nicht Zutreffendes", merged)
+        # Der Lieferumfang steht genau einmal, als Stichpunkte.
+        self.assertEqual(merged.count("### Lieferumfang"), 1)
+        self.assertIn("* Gehäuse\n* Originalverpackung", merged)
+        self.assertNotIn("[Ladekabel / Netzteil]", merged)
+        # Kein zusaetzlicher Sammelabschnitt mehr.
+        self.assertNotIn("Angaben zum angebotenen Artikel", merged)
+        self.assertTrue(merged.rstrip().endswith("Bei Fragen einfach melden."))
+
+    def test_applying_the_assistant_twice_changes_nothing(self):
+        gui = self.assistant()
+        items = ProductGeneratorGUI.scope_items("Gehäuse, Originalverpackung")
+        price = gui.assistant_price_text(50.0)
+        once = gui.merge_assistant_details(
+            self.draft_body(), "Neu", items, price
+        )
+        twice = gui.merge_assistant_details(once, "Neu", items, price)
+        self.assertEqual(once, twice)
+
+    def test_placeholders_stay_while_no_condition_is_chosen(self):
+        merged = self.assistant().merge_assistant_details(
+            self.draft_body(), "", [], ""
+        )
+        self.assertIn("**[sehr gutem", merged)
+        self.assertIn("Nicht Zutreffendes", merged)
+
+    def test_price_carries_the_kleinanzeigen_price_type(self):
+        self.assertEqual(
+            self.assistant(price_type='VB').assistant_price_text(50.0),
+            "50,00 € VB",
+        )
+        self.assertEqual(
+            self.assistant(price_type='Festpreis').assistant_price_text(1234.5),
+            "1.234,50 € Festpreis",
+        )
+        # "Zu verschenken" ersetzt den Betrag, statt ihn zu ergaenzen.
+        self.assertEqual(
+            self.assistant(price_type='Zu verschenken')
+            .assistant_price_text(50.0),
+            "Zu verschenken",
+        )
+        self.assertEqual(
+            self.assistant('en', 'Negotiable').assistant_price_text(1234.5),
+            "1,234.50 € Negotiable",
+        )
+
+    def photo_with_location(self, path, size=(3000, 2000), colour=(200, 30, 30)):
+        """Erzeugt ein Foto mit GPS-Daten und gedrehter Orientierung."""
+        image = Image.new("RGB", size, colour)
+        exif = image.getexif()
+        exif[274] = 6                       # Orientierung: 90 Grad
+        exif[271] = "TestPhone"             # Kamerahersteller
+        gps = exif.get_ifd(0x8825)
+        gps[1] = 'N'
+        gps[2] = tuple(IFDRational(value) for value in (52, 31, 12))
+        image.save(path, exif=exif)
+        return path
+
+    def test_prepared_photos_lose_their_location_data(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = self.photo_with_location(Path(folder) / "IMG_0001.jpg")
+            target = Path(folder) / "01-hauptbild.jpg"
+            self.assertTrue(prepare_own_image(source, target))
+            with Image.open(target) as prepared:
+                exif = prepared.getexif()
+                # Standortdaten wuerden sonst die Wohnadresse verraten.
+                self.assertFalse(exif.get_ifd(0x8825))
+                self.assertIsNone(exif.get(271))
+                self.assertIsNone(exif.get(274))
+                # Orientierung angewandt, Kantenlaenge begrenzt.
+                self.assertEqual(max(prepared.size), OWN_IMAGE_MAX_EDGE)
+                self.assertGreater(prepared.height, prepared.width)
+
+    def test_own_photos_keep_their_order_in_the_export(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = ListingStore(root / "listings.db")
+            try:
+                product_id = store.upsert_product("Testprodukt", "1")
+                store.save_draft(product_id, "kleinanzeigen", "Titel", "Text")
+                paths = [
+                    self.photo_with_location(
+                        root / f"IMG_{n}.jpg", colour=(40 * n, 30, 200)
+                    )
+                    for n in range(1, 4)
+                ]
+                ids = [store.add_image(product_id, path) for path in paths]
+                # Dasselbe Foto zweimal ergibt keinen zweiten Eintrag.
+                self.assertEqual(store.add_image(product_id, paths[0]), ids[0])
+                self.assertEqual(len(store.images(product_id, True)), 3)
+                # Das dritte Foto wird zum Hauptbild.
+                store.reorder_images([ids[2], ids[0], ids[1]])
+                ordered = [
+                    Path(image['path']).name
+                    for image in store.images(product_id, own_only=True)
+                ]
+                self.assertEqual(
+                    ordered, ["IMG_3.jpg", "IMG_1.jpg", "IMG_2.jpg"]
+                )
+                exported = store.export_package(
+                    product_id, root / "export",
+                    images=[
+                        image['path']
+                        for image in store.images(product_id, own_only=True)
+                    ],
+                    prepare=prepare_own_image,
+                )
+                names = sorted(
+                    item.name for item in exported.iterdir() if item.is_file()
+                )
+                self.assertIn("01-hauptbild.jpg", names)
+                self.assertIn("02-produktbild.jpg", names)
+                self.assertIn("03-produktbild.jpg", names)
+                with Image.open(exported / "01-hauptbild.jpg") as main:
+                    self.assertFalse(main.getexif().get_ifd(0x8825))
+                store.remove_image(ids[0])
+                self.assertEqual(len(store.images(product_id, True)), 2)
+                # Die Originaldatei bleibt unangetastet.
+                self.assertTrue(paths[0].is_file())
+            finally:
+                store.close()
+
+    def test_menubar_entries_start_at_index_zero(self):
+        """Ein Tearoff-Eintrag wuerde alle Menue-Indizes verschieben.
+
+        Unter Windows legt Tk ihn ohne ``tearoff=0`` auf Index 0; jedes
+        ``entryconfig(0, label=…)`` beim Sprachwechsel bricht dann ab.
+        """
+        root = tk.Tk()
+        try:
+            root.withdraw()
+            menubar = tk.Menu(root, tearoff=0)
+            menubar.add_cascade(
+                label="Datei", menu=tk.Menu(menubar, tearoff=0)
+            )
+            root.config(menu=menubar)
+            self.assertEqual(menubar.type(0), 'cascade')
+            menubar.entryconfig(0, label="File")
+        finally:
+            root.destroy()
+
+    def test_scope_input_becomes_separate_items(self):
+        items = ProductGeneratorGUI.scope_items
+        self.assertEqual(
+            items("Gehäuse, [Originalverpackung]; Kabel\nNetzteil"),
+            ["Gehäuse", "Originalverpackung", "Kabel", "Netzteil"],
+        )
+        self.assertEqual(items("* Nur Gehäuse"), ["Nur Gehäuse"])
+        self.assertEqual(items(""), [])
+
+    def test_german_and_english_price_notations_are_parsed(self):
+        parse = ProductGeneratorGUI.parse_price
+        self.assertAlmostEqual(parse("1.234,56"), 1234.56)
+        self.assertAlmostEqual(parse("1,234.56"), 1234.56)
+        self.assertAlmostEqual(parse("1234,56"), 1234.56)
+        self.assertAlmostEqual(parse("1234.56"), 1234.56)
+        self.assertAlmostEqual(parse("99,90 EUR"), 99.90)
+        self.assertAlmostEqual(parse("1234"), 1234.0)
+        self.assertIsNone(parse("keine Zahl"))
+        self.assertIsNone(parse(""))
+        self.assertEqual(ProductGeneratorGUI.format_price(1234.5), "1.234,50")
+
+    def test_shortened_body_keeps_leading_text_contiguous(self):
+        stub = SimpleNamespace(legal_clause="Hinweis")
+        body = "\n\n".join(["A" * 60, "B" * 400, "C" * 20])
+        shortened = ProductGeneratorGUI.fit_platform_body(stub, body, 200)
+        # Der zu lange Block bricht ab; spätere Absätze dürfen nicht
+        # nachrücken und den Text in der Mitte auftrennen.
+        self.assertTrue(shortened.startswith("A" * 60))
+        self.assertNotIn("C" * 20, shortened)
 
     def test_duplicate_names_do_not_overwrite_files(self):
         first = self.generator.save_listing("eins", "Produkt")
@@ -126,7 +336,8 @@ class ListingStoreTests(unittest.TestCase):
             Path(self.temp_dir.name) / "listings.db"
         )
         self.generator = ProductGenerator(
-            products_file="products.json", output_dir=self.temp_dir.name
+            products_file=default_products_file(),
+            output_dir=self.temp_dir.name,
         )
         self.product_id = self.store.upsert_product(
             "Samsung Galaxy S23", identifier="4006381333931"
@@ -824,7 +1035,12 @@ class OnlineProviderTests(unittest.TestCase):
             "https://www.amazon.de/Produktname/dp/B07Q9QLH55"
         )
         self.assertEqual(provider_name, "Amazon-Link")
-        self.assertEqual(provider.__func__, gui.search_amazon.__func__)
+        # Der Wrapper ruft search_amazon auf und weicht bei einer Blockade auf
+        # die Vergleichsportale aus, statt ohne Treffer aufzugeben.
+        self.assertEqual(
+            provider.__func__,
+            gui.search_amazon_url_with_fallback.__func__,
+        )
 
     def test_truncated_amazon_title_uses_unique_suggestion_completion(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
@@ -850,6 +1066,115 @@ class OnlineProviderTests(unittest.TestCase):
             title, ["Produkt Receiver", "Produkt Receiving"]
         )
         self.assertEqual(repaired, title)
+
+    def test_asin_is_read_from_the_product_segment_only(self):
+        asin = ProductGeneratorGUI.amazon_asin
+        # Der Slug endet auf ein zehn Zeichen langes Wortende direkt vor dem
+        # Schraegstrich; es darf nicht als ASIN gelesen werden.
+        self.assertEqual(
+            asin(
+                "https://www.amazon.de/QB-X2US3R-Festplattengeh%C3%A4use-"
+                "Festplatten-SUPERSPEED-temperaturgeregelt/dp/B01GSWFOA4"
+            ),
+            "B01GSWFOA4",
+        )
+        self.assertEqual(
+            asin("https://www.amazon.de/dp/B01GSWFOA4?ref=x&th=1"),
+            "B01GSWFOA4",
+        )
+        self.assertEqual(
+            asin("https://www.amazon.de/gp/product/B01GSWFOA4/"),
+            "B01GSWFOA4",
+        )
+        self.assertEqual(asin("B01GSWFOA4"), "B01GSWFOA4")
+        # Ohne Produktsegment wird nicht geraten.
+        self.assertEqual(asin("https://www.amazon.de/s?k=festplatte"), "")
+        self.assertEqual(asin("Samsung Galaxy S23"), "")
+
+    def test_amazon_urls_without_asin_become_a_real_query(self):
+        query = ProductGeneratorGUI.amazon_search_query
+        self.assertEqual(
+            query("https://www.amazon.de/s?k=Fantec+QB-X2US3R"),
+            "Fantec QB-X2US3R",
+        )
+        self.assertEqual(
+            query("https://www.amazon.de/Fantec-QB-X2US3R-Gehaeuse/b/12345"),
+            "Fantec QB X2US3R Gehaeuse",
+        )
+        self.assertEqual(query("Fantec QB-X2US3R"), "Fantec QB-X2US3R")
+
+    def test_failed_searches_are_never_cached(self):
+        found = [("Titel", "Text", "https://example.test/p")]
+        seconds = ProductGeneratorGUI.cache_seconds_for
+        self.assertEqual(seconds([], ["Amazon blockiert"]), 0)
+        self.assertEqual(seconds([], []), 0)
+        self.assertGreater(seconds(found, []), seconds(found, ["Idealo 503"]))
+        self.assertGreater(seconds(found, ["Idealo 503"]), 0)
+
+    def test_a_blocked_search_does_not_hide_a_later_retry(self):
+        key = ("regressionstest", ())
+        found = [("Titel", "Text", "https://example.test/p")]
+        try:
+            ProductGeneratorGUI._cache_store(key, [], ["blockiert"])
+            self.assertIsNone(ProductGeneratorGUI._cache_lookup(key))
+            ProductGeneratorGUI._cache_store(key, found, [])
+            self.assertEqual(
+                ProductGeneratorGUI._cache_lookup(key), (found, [])
+            )
+            # Ein spaeterer Fehlschlag darf keinen veralteten Treffer stehen
+            # lassen.
+            ProductGeneratorGUI._cache_store(key, [], ["blockiert"])
+            self.assertIsNone(ProductGeneratorGUI._cache_lookup(key))
+        finally:
+            ProductGeneratorGUI._search_cache.pop(key, None)
+
+    def test_model_number_is_derived_from_a_product_slug(self):
+        model = ProductGeneratorGUI.model_query_from_slug
+        self.assertEqual(
+            model(
+                "https://www.amazon.de/QB-X2US3R-Festplattengeh%C3%A4use-"
+                "Festplatten-SUPERSPEED-temperaturgeregelt/dp/B01GSWFOA4"
+            ),
+            "QB-X2US3R",
+        )
+        self.assertEqual(
+            model("https://www.amazon.de/Samsung-Galaxy-S23-Smartphone/dp/X"),
+            "Samsung-Galaxy-S23",
+        )
+        self.assertEqual(model("https://www.amazon.de/dp/B01GSWFOA4"), "")
+
+    def test_blocked_amazon_link_falls_back_to_other_sources(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        url = (
+            "https://www.amazon.de/QB-X2US3R-Festplatten-"
+            "temperaturgeregelt/dp/B01GSWFOA4"
+        )
+        found = ("Fantec QB-X2US3R, schwarz", "Online gefunden", "https://g.test/x")
+        with patch.object(
+            gui, 'search_amazon',
+            side_effect=RuntimeError("Zugriff durch Amazon-Captcha blockiert"),
+        ), patch.object(
+            gui, 'search_geizhals', return_value=[found]
+        ) as geizhals, patch.object(
+            gui, 'search_idealo', return_value=[]
+        ), patch.object(gui, 'search_wikipedia', return_value=[]):
+            results = ProductGeneratorGUI.search_amazon_url_with_fallback(
+                gui, url
+            )
+        # Die Modellnummer aus dem Slug, nicht die nur Amazon bekannte ASIN.
+        geizhals.assert_called_once_with("QB-X2US3R")
+        self.assertEqual(results, [found])
+
+    def test_navigation_and_script_links_are_not_products(self):
+        is_product = ProductGeneratorGUI.is_product_page_link
+        base = "https://geizhals.de"
+        self.assertTrue(
+            is_product("/fantec-qb-x2us3r-schwarz-1826-a1471139.html", base)
+        )
+        self.assertFalse(is_product("javascript:;", base))
+        self.assertFalse(is_product("?fs=QB-X2US3R&hloc=de&cat=gehhd", base))
+        self.assertFalse(is_product("https://geizhals.de/?fs=X&mfc=5872", base))
+        self.assertFalse(is_product("#top", base))
 
     def test_known_amazon_fragment_is_repaired_without_network(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)

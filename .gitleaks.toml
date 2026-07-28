@@ -1,0 +1,34 @@
+# Konfiguration der Geheimnis-Suche.
+#
+# Die Standardregeln bleiben vollstaendig aktiv; ergaenzt wird ausschliesslich
+# eine eng gefasste Ausnahme fuer einen belegten Fehlalarm.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = """
+Fehlalarm der Regel generic-api-key.
+
+In product_generator_gui.py steht die Argumentliste eines Funktionsaufrufs:
+
+    client = EbayListingClient(
+        client_id=client_id,
+        client_secret=client_secret,
+        ...
+
+Die Regel wertet die Woerter "client_id, client_secret" zusammen mit dem
+folgenden Text als moeglichen Schluessel. Dort stehen jedoch nur
+Variablennamen. Die tatsaechlichen Zugangsdaten stammen zur Laufzeit aus dem
+Betriebssystem-Schluesselspeicher beziehungsweise aus Umgebungsvariablen und
+werden nie im Quelltext hinterlegt - siehe ProductGeneratorGUI.get_secret.
+
+Die Ausnahme ist absichtlich auf genau diese Zeichenfolge begrenzt, damit
+echte Funde weiterhin gemeldet werden.
+"""
+# Ohne regexTarget vergleicht gitleaks nur den erkannten Geheimniswert; hier
+# muss die ganze Zeile geprueft werden, weil dort die Variablennamen stehen.
+regexTarget = "line"
+regexes = [
+    '''client_id, client_secret''',
+]
