@@ -1801,3 +1801,70 @@ class EditorBasicsTests(unittest.TestCase):
             self.assertFalse(gueltig(root, "kaputt"))
         finally:
             root.destroy()
+
+
+class ListingManagerTests(unittest.TestCase):
+    """Gespeicherte Beiträge müssen auffindbar und verwaltbar sein."""
+
+    def store(self, folder):
+        store = ListingStore(Path(folder) / "listings.db")
+        erster = store.upsert_product("Fantec QB-X2US3R", "4250199300182")
+        store.save_draft(erster, "kleinanzeigen", "Titel", "Text")
+        store.save_draft(erster, "ebay", "Titel", "Text")
+        store.add_fact(erster, "Farbe", "schwarz", "Geizhals")
+        zweiter = store.upsert_product("Marantz M-CR612", "")
+        return store, erster, zweiter
+
+    def test_listings_are_reported_with_their_scope(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, erster, _ = self.store(folder)
+            try:
+                eintraege = {e['id']: e for e in store.products()}
+                self.assertEqual(len(eintraege), 2)
+                self.assertEqual(eintraege[erster]['draft_count'], 2)
+                self.assertEqual(eintraege[erster]['fact_count'], 1)
+                self.assertEqual(eintraege[erster]['own_image_count'], 0)
+                # Zuletzt geaenderter Beitrag zuerst.
+                self.assertEqual(
+                    [e['name'] for e in store.products()][0], "Marantz M-CR612"
+                )
+            finally:
+                store.close()
+
+    def test_renaming_keeps_the_identifier(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, erster, _ = self.store(folder)
+            try:
+                self.assertTrue(store.rename_product(erster, " Neuer Name "))
+                eintrag = next(
+                    e for e in store.products() if e['id'] == erster
+                )
+                self.assertEqual(eintrag['name'], "Neuer Name")
+                self.assertEqual(eintrag['identifier'], "4250199300182")
+                # Ein leerer Name darf den Beitrag nicht namenlos machen.
+                self.assertFalse(store.rename_product(erster, "   "))
+                self.assertEqual(
+                    next(e for e in store.products()
+                         if e['id'] == erster)['name'],
+                    "Neuer Name",
+                )
+            finally:
+                store.close()
+
+    def test_deleting_removes_everything_that_belongs_to_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store, erster, zweiter = self.store(folder)
+            try:
+                store.save_draft(erster, "kleinanzeigen", "Neu", "Anders")
+                store.delete_product(erster)
+                self.assertEqual(
+                    [e['id'] for e in store.products()], [zweiter]
+                )
+                for tabelle in ('facts', 'drafts', 'draft_versions'):
+                    verbleibend = store.connection.execute(
+                        f"SELECT COUNT(*) FROM {tabelle} WHERE product_id=?",
+                        (erster,),
+                    ).fetchone()[0]
+                    self.assertEqual(verbleibend, 0, tabelle)
+            finally:
+                store.close()

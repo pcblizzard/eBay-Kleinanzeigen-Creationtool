@@ -25,7 +25,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 import threading
 import time
 import unicodedata
@@ -332,6 +332,23 @@ TRANSLATIONS = {
         "ebay_publish_action": "Angebot anlegen und veröffentlichen",
         "ebay_publish_missing": "Es fehlen noch:",
         "dialog_close": "Schließen",
+        "manager_menu": "Gespeicherte Beiträge…",
+        "manager_title": "Gespeicherte Beiträge",
+        "manager_name": "Beitrag",
+        "manager_updated": "Zuletzt geändert",
+        "manager_drafts": "Entwürfe",
+        "manager_facts": "Fakten",
+        "manager_images": "Fotos",
+        "manager_open": "Öffnen",
+        "manager_rename": "Umbenennen",
+        "manager_rename_prompt": "Neue Bezeichnung:",
+        "manager_delete": "Löschen",
+        "manager_delete_confirm": (
+            "„{name}“ mit allen Entwürfen, Fakten und Preisen löschen?\n\n"
+            "Eigene Fotodateien bleiben erhalten; gespeichert sind nur ihre "
+            "Pfade. Rückgängig machen lässt sich das nicht."
+        ),
+        "manager_count": "{count} Beiträge",
         "ebay_ready": "Alle Pflichtangaben vorhanden.",
         "ebay_confirm": (
             "Damit entsteht ein öffentliches, kostenpflichtiges eBay-Angebot "
@@ -565,6 +582,23 @@ TRANSLATIONS = {
         "ebay_publish_action": "Create and publish offer",
         "ebay_publish_missing": "Still missing:",
         "dialog_close": "Close",
+        "manager_menu": "Saved listings…",
+        "manager_title": "Saved listings",
+        "manager_name": "Listing",
+        "manager_updated": "Last changed",
+        "manager_drafts": "Drafts",
+        "manager_facts": "Facts",
+        "manager_images": "Photos",
+        "manager_open": "Open",
+        "manager_rename": "Rename",
+        "manager_rename_prompt": "New name:",
+        "manager_delete": "Delete",
+        "manager_delete_confirm": (
+            "Delete “{name}” with all drafts, facts and prices?\n\n"
+            "Your own photo files are kept; only their paths are stored. "
+            "This cannot be undone."
+        ),
+        "manager_count": "{count} listings",
         "ebay_ready": "All required details are present.",
         "ebay_confirm": (
             "This creates a public eBay listing under your account that may "
@@ -6666,6 +6700,10 @@ class TabbedProductGeneratorGUI:
             label=TRANSLATIONS['de']['menu_open'], command=self.open_file
         )
         self.file_menu.add_command(
+            label=TRANSLATIONS['de']['manager_menu'],
+            command=self.open_listing_manager,
+        )
+        self.file_menu.add_command(
             label=TRANSLATIONS['de']['menu_save'],
             command=lambda: self.run_on_active(ProductGeneratorGUI.save_file),
         )
@@ -6688,6 +6726,154 @@ class TabbedProductGeneratorGUI:
             self.add_tab()
         self.root.after(SESSION_AUTOSAVE_MS, self.autosave_session)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def open_listing_manager(self):
+        """Zeigt die gespeicherten Beiträge zum Öffnen, Umbenennen, Löschen.
+
+        Ohne diese Ansicht bleibt alles in der Produktakte unerreichbar,
+        sobald der zugehörige Tab geschlossen ist.
+        """
+        controller = self.active_controller()
+        if controller is None:
+            return
+        trans = TRANSLATIONS[controller.language]
+        store = controller.listing_store
+
+        window = tk.Toplevel(self.root)
+        window.title(trans['manager_title'])
+        window.transient(self.root)
+        window.geometry('820x420')
+        frame = ttk.Frame(window, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        columns = ('name', 'updated', 'drafts', 'facts', 'images')
+        tree = ttk.Treeview(
+            frame, columns=columns, show='headings', selectmode='browse'
+        )
+        for column, key, width, anchor in (
+            ('name', 'manager_name', 340, tk.W),
+            ('updated', 'manager_updated', 130, tk.W),
+            ('drafts', 'manager_drafts', 90, tk.CENTER),
+            ('facts', 'manager_facts', 90, tk.CENTER),
+            ('images', 'manager_images', 90, tk.CENTER),
+        ):
+            tree.heading(column, text=trans[key])
+            tree.column(column, width=width, anchor=anchor)
+        scrollbar = ttk.Scrollbar(frame, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.LEFT, fill=tk.Y)
+
+        status_var = tk.StringVar()
+        entries = {}
+
+        def refresh():
+            tree.delete(*tree.get_children())
+            entries.clear()
+            for entry in store.products():
+                stamp = datetime.fromtimestamp(
+                    entry['updated_at']
+                ).strftime('%d.%m.%Y %H:%M')
+                tree.insert('', tk.END, iid=entry['id'], values=(
+                    entry['name'], stamp, entry['draft_count'],
+                    entry['fact_count'], entry['own_image_count'],
+                ))
+                entries[entry['id']] = entry
+            status_var.set(
+                trans['manager_count'].format(count=len(entries))
+            )
+
+        def selected():
+            selection = tree.selection()
+            return entries.get(selection[0]) if selection else None
+
+        def open_entry(event=None):
+            entry = selected()
+            if entry is None:
+                return
+            self.open_stored_listing(entry)
+            window.destroy()
+
+        def rename_entry():
+            entry = selected()
+            if entry is None:
+                return
+            neu = simpledialog.askstring(
+                trans['manager_rename'], trans['manager_rename_prompt'],
+                initialvalue=entry['name'], parent=window,
+            )
+            if neu and store.rename_product(entry['id'], neu):
+                refresh()
+
+        def delete_entry():
+            entry = selected()
+            if entry is None:
+                return
+            if not messagebox.askyesno(
+                trans['manager_delete'],
+                trans['manager_delete_confirm'].format(name=entry['name']),
+                parent=window, default=messagebox.NO, icon=messagebox.WARNING,
+            ):
+                return
+            store.delete_product(entry['id'])
+            # Ein offener Tab darf nicht auf einen geloeschten Beitrag zeigen.
+            for open_controller in self.controllers.values():
+                if open_controller.product_record_id == entry['id']:
+                    open_controller.product_record_id = ''
+            refresh()
+
+        tree.bind('<Double-1>', open_entry)
+        buttons = ttk.Frame(window, padding=(10, 0, 10, 10))
+        buttons.pack(fill=tk.X)
+        ttk.Button(
+            buttons, text=trans['manager_open'], command=open_entry
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            buttons, text=trans['manager_rename'], command=rename_entry
+        ).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(
+            buttons, text=trans['manager_delete'], command=delete_entry
+        ).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Label(
+            buttons, textvariable=status_var, foreground='#555555'
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Button(
+            buttons, text=trans['dialog_close'], command=window.destroy
+        ).pack(side=tk.RIGHT)
+        refresh()
+
+    def open_stored_listing(self, entry):
+        """Holt einen gespeicherten Beitrag in einen neuen Tab zurück."""
+        controller = self.add_tab()
+        store = controller.listing_store
+        facts = store.confirmed_values(entry['id'])
+        description = '\n'.join(
+            f"{key}: {value}" for key, value in facts.items()
+        )
+        variant = {
+            'name': entry['name'],
+            'description': description,
+            'source_url': entry.get('source_url', ''),
+        }
+        if entry.get('identifier'):
+            variant['ean'] = entry['identifier']
+        controller.search_var.set(entry['name'])
+        if controller._search_after_id is not None:
+            controller.root.after_cancel(controller._search_after_id)
+            controller._search_after_id = None
+        # Keine Onlinesuche anstossen: gefragt ist der gespeicherte Stand.
+        controller._search_generation += 1
+        controller.selected_variant = variant
+        controller.search_results = [{'group_id': 'gespeichert',
+                                      'variant': variant}]
+        controller.variant_listbox.delete(0, tk.END)
+        controller.variant_listbox.insert(tk.END, entry['name'])
+        controller.variant_listbox.selection_set(0)
+        controller.initialize_listing_assistant(variant, description)
+        controller.render_live_preview()
+        if controller.title_callback:
+            controller.title_callback(entry['name'])
+        return controller
 
     def bind_shortcuts(self):
         """Übliche Tastenkürzel; Strg+Z besorgt das Textfeld selbst."""
@@ -6743,8 +6929,9 @@ class TabbedProductGeneratorGUI:
         self.ebay_publish_button.config(text=trans['ebay_publish'])
         self.file_menu.entryconfig(0, label=trans['menu_new'])
         self.file_menu.entryconfig(1, label=trans['menu_open'])
-        self.file_menu.entryconfig(2, label=trans['menu_save'])
-        self.file_menu.entryconfig(4, label=trans['menu_exit'])
+        self.file_menu.entryconfig(2, label=trans['manager_menu'])
+        self.file_menu.entryconfig(3, label=trans['menu_save'])
+        self.file_menu.entryconfig(5, label=trans['menu_exit'])
         self.menubar.entryconfig(0, label=trans['menu_file'])
         self.menubar.entryconfig(1, label=trans['menu_settings'])
 

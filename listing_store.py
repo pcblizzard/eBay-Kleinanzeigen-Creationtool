@@ -523,6 +523,53 @@ class ListingStore:
         return json.loads(row["payload_json"])
 
     @synchronized
+    def products(self) -> list[dict]:
+        """Listet alle Beiträge samt Umfang für die Beitragsverwaltung."""
+        rows = self.connection.execute(
+            """
+            SELECT p.id, p.name, p.identifier, p.source_url, p.updated_at,
+                   (SELECT COUNT(*) FROM drafts d WHERE d.product_id = p.id)
+                       AS draft_count,
+                   (SELECT COUNT(*) FROM facts f WHERE f.product_id = p.id
+                        AND f.status <> 'rejected') AS fact_count,
+                   (SELECT COUNT(*) FROM images i WHERE i.product_id = p.id
+                        AND i.is_own = 1) AS own_image_count
+            FROM products p
+            ORDER BY p.updated_at DESC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    @synchronized
+    def rename_product(self, product_id: str, name: str):
+        """Ändert nur die Bezeichnung; die Kennung bleibt bestehen."""
+        clean = re.sub(r"\s+", " ", str(name)).strip()
+        if not clean:
+            return False
+        self.connection.execute(
+            "UPDATE products SET name=?, updated_at=? WHERE id=?",
+            (clean, int(time.time()), product_id),
+        )
+        self.connection.commit()
+        return True
+
+    @synchronized
+    def delete_product(self, product_id: str):
+        """Entfernt einen Beitrag mit allem, was daran hängt.
+
+        Bilddateien bleiben unangetastet – gespeichert sind nur ihre Pfade.
+        """
+        with self.connection:
+            # draft_versions hat keinen Fremdschluessel und bliebe sonst
+            # verwaist zurueck.
+            self.connection.execute(
+                "DELETE FROM draft_versions WHERE product_id=?", (product_id,)
+            )
+            self.connection.execute(
+                "DELETE FROM products WHERE id=?", (product_id,)
+            )
+
+    @synchronized
     def add_image(
         self, product_id: str, path, source_url: str = "", is_own: bool = True
     ) -> int:
