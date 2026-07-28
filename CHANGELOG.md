@@ -40,10 +40,10 @@ Werkzeug aus Geizhals, Amazon, Wikipedia, der DNB und der eBay-API bezieht.
 
 Der vorgegebene Privatverkaufs-Hinweis lautet nun:
 
-> Privatverkauf, keine Gewährleistung, keine Rücknahme.
+> Privatverkauf, keine Gewährleistung, keine Garantie, keine Rücknahme.
 > Verkauf von privat unter Ausschluss der Sachmängelhaftung. Die Haftung für
 > Vorsatz, grobe Fahrlässigkeit sowie für Schäden aus Verletzung von Leben,
-> Körper oder Gesundheit bleibt unberührt. Keine Rücknahme, keine Garantie.
+> Körper oder Gesundheit bleibt unberührt.
 
 Die bisherige Fassung berief sich auf § 475 BGB, der Verbrauchsgüterkäufe
 zwischen Unternehmern und Verbrauchern regelt und auf einen Privatverkauf
