@@ -1876,3 +1876,55 @@ class ListingManagerTests(unittest.TestCase):
                     self.assertEqual(verbleibend, 0, tabelle)
             finally:
                 store.close()
+
+
+class SnippetTests(unittest.TestCase):
+    """Textbausteine für wiederkehrende Angaben."""
+
+    def test_broken_entries_fall_back_to_the_defaults(self):
+        normalize = ProductGeneratorGUI.normalize_snippets
+        vorgabe = [s['name'] for s in normalize(None, 'de')]
+        self.assertEqual(vorgabe[0], "Versand")
+        # Unbrauchbare Eintraege duerfen nicht als Baustein durchgehen.
+        self.assertEqual(
+            [s['name'] for s in normalize(
+                [{'name': '', 'text': 'x'}, {'kaputt': 1}, 'text'], 'de'
+            )],
+            vorgabe,
+        )
+        # Ein einziger gueltiger Eintrag ersetzt die Vorgabe vollstaendig.
+        eigene = normalize(
+            [{'name': ' Eigener ', 'text': ' Mein Text '}], 'de'
+        )
+        self.assertEqual(eigene, [{'name': 'Eigener', 'text': 'Mein Text'}])
+
+    def test_defaults_follow_the_interface_language(self):
+        normalize = ProductGeneratorGUI.normalize_snippets
+        self.assertEqual(normalize(None, 'en')[0]['name'], "Shipping")
+        # Unbekannte Sprache faellt auf Deutsch zurueck.
+        self.assertEqual(normalize(None, 'fr')[0]['name'], "Versand")
+
+    @unittest.skipUnless(DISPLAY_AVAILABLE, "kein Display verfügbar")
+    def test_a_snippet_becomes_its_own_paragraph(self):
+        root = tk.Tk()
+        try:
+            root.withdraw()
+            editor = tk.Text(root, undo=True)
+            stub = SimpleNamespace(
+                preview_text=editor,
+                render_live_preview=lambda: None,
+                update_listing_counters=lambda: None,
+            )
+            editor.insert('1.0', "Erster Absatz.")
+            editor.mark_set(tk.INSERT, tk.END)
+            ProductGeneratorGUI.insert_snippet(stub, "Versand als Paket.")
+            inhalt = editor.get('1.0', tk.END).strip()
+            # Leerzeile dazwischen, damit nichts mitten im Satz landet.
+            self.assertEqual(
+                inhalt, "Erster Absatz.\n\nVersand als Paket."
+            )
+            # Ein leerer Baustein aendert nichts.
+            ProductGeneratorGUI.insert_snippet(stub, "")
+            self.assertEqual(editor.get('1.0', tk.END).strip(), inhalt)
+        finally:
+            root.destroy()

@@ -79,6 +79,34 @@ neu original zubehoer zubehör set kit edition version modell
 mit ohne und der die das für fuer von aus im in
 """.split())
 
+# Bausteine, die in fast jedem Inserat vorkommen. Sie dienen als Startpunkt
+# und lassen sich vollständig ersetzen; eckige Klammern markieren wie überall
+# im Werkzeug die Stellen, die noch auszufüllen sind.
+DEFAULT_SNIPPETS = {
+    'de': (
+        ("Versand",
+         "Versand als DHL Paket für [X,XX] €. Der Versand erfolgt "
+         "versichert; das Paket wird sorgfältig verpackt."),
+        ("Abholung",
+         "Abholung in [PLZ Ort] nach Absprache möglich. "
+         "Barzahlung bei Abholung."),
+        ("Zahlung",
+         "Zahlung per Überweisung im Voraus oder bar bei Abholung."),
+        ("Haushalt",
+         "Der Artikel stammt aus einem tierfreien Nichtraucherhaushalt."),
+    ),
+    'en': (
+        ("Shipping",
+         "Shipped as a tracked parcel for [X.XX] €. Carefully packed."),
+        ("Collection",
+         "Collection in [postcode, town] by arrangement. Cash on collection."),
+        ("Payment",
+         "Payment by bank transfer in advance or cash on collection."),
+        ("Household",
+         "The item comes from a non-smoking, pet-free household."),
+    ),
+}
+
 SUPERSEDED_CLAUSES = (
     "Privatverkauf. Die Ware wird unter Ausschluss der Sachmängelhaftung "
     "nach § 475 BGB verkauft. Ausgeschlossen ist jede Gewährleistung für "
@@ -498,6 +526,16 @@ TRANSLATIONS = {
         "apply_assistant": "Angaben in Entwürfe übernehmen",
         "fact_conflicts": "Widersprüche prüfen",
         "buyback_check": "💶 Ankaufspreis prüfen",
+        "snippet_button": "📄 Textbaustein",
+        "snippet_manage": "Bausteine verwalten…",
+        "snippet_name": "Bezeichnung:",
+        "snippet_text": "Text:",
+        "snippet_add": "Neu",
+        "snippet_apply": "Übernehmen",
+        "snippet_remove": "Entfernen",
+        "snippet_defaults": "Vorgaben",
+        "snippet_save": "Speichern",
+        "snippet_new": "Neuer Baustein",
         "buyback_copied": "In die Zwischenablage gelegt:",
         "buyback_opened": "Ankaufspreis geöffnet bei",
         "no_fact_conflicts": "Keine unbestätigten Datenkonflikte vorhanden.",
@@ -1191,6 +1229,9 @@ class ProductGeneratorGUI:
         self.legal_clause = self.current_legal_clause(
             config.get('legal_clause')
         )
+        self.snippets = self.normalize_snippets(
+            config.get('snippets'), self.language
+        )
         project_output = str(default_output_dir())
         self.save_path = config.get('save_path', project_output)
         if not os.path.exists(self.save_path):
@@ -1306,6 +1347,7 @@ class ProductGeneratorGUI:
                 'ebay_ru_name': self.ebay_ru_name,
                 'ebay_postal_code': self.ebay_postal_code,
                 'ebay_country': self.ebay_country,
+                'snippets': getattr(self, 'snippets', []),
                 'window_geometry': getattr(
                     self, 'window_geometry', ''
                 ) or config_before.get('window_geometry', ''),
@@ -1620,6 +1662,12 @@ class ProductGeneratorGUI:
             state=tk.DISABLED,
         )
         self.buyback_button.pack(side=tk.LEFT, padx=(6, 0))
+        self.snippet_button = ttk.Button(
+            assistant_actions,
+            text=trans['snippet_button'],
+            command=self.show_snippet_menu,
+        )
+        self.snippet_button.pack(side=tk.LEFT, padx=(6, 0))
         self.completeness_var = tk.StringVar()
         ttk.Label(
             assistant_actions, textvariable=self.completeness_var,
@@ -2891,6 +2939,162 @@ class ProductGeneratorGUI:
         webbrowser.open(template)
         self.status_var.set(f"{trans['buyback_copied']} {value}")
 
+    @staticmethod
+    def normalize_snippets(saved, language):
+        """Prüft gespeicherte Bausteine und liefert sonst die Vorgaben."""
+        bausteine = []
+        for entry in saved or []:
+            if not isinstance(entry, dict):
+                continue
+            name = re.sub(r'\s+', ' ', str(entry.get('name', ''))).strip()
+            text = str(entry.get('text', '')).strip()
+            if name and text:
+                bausteine.append({'name': name[:40], 'text': text})
+        if bausteine:
+            return bausteine
+        return [
+            {'name': name, 'text': text}
+            for name, text in DEFAULT_SNIPPETS.get(
+                language, DEFAULT_SNIPPETS['de']
+            )
+        ]
+
+    def insert_snippet(self, text):
+        """Fügt einen Baustein an der Schreibmarke ein.
+
+        Er wird als eigener Absatz abgesetzt, damit er nicht mitten in einen
+        bestehenden Satz rutscht.
+        """
+        if not text:
+            return
+        vorher = self.preview_text.get('1.0', tk.INSERT)
+        block = text.strip()
+        if vorher.strip() and not vorher.endswith('\n\n'):
+            block = ('\n' if vorher.endswith('\n') else '\n\n') + block
+        self.preview_text.insert(tk.INSERT, block + '\n')
+        self.preview_text.edit_separator()
+        self.render_live_preview()
+        self.update_listing_counters()
+
+    def show_snippet_menu(self):
+        trans = TRANSLATIONS[self.language]
+        menu = tk.Menu(self.root, tearoff=0)
+        for snippet in self.snippets:
+            menu.add_command(
+                label=snippet['name'],
+                command=lambda text=snippet['text']: self.insert_snippet(text),
+            )
+        if self.snippets:
+            menu.add_separator()
+        menu.add_command(
+            label=trans['snippet_manage'], command=self.manage_snippets
+        )
+        try:
+            menu.tk_popup(
+                self.snippet_button.winfo_rootx(),
+                self.snippet_button.winfo_rooty()
+                + self.snippet_button.winfo_height(),
+            )
+        finally:
+            menu.grab_release()
+
+    def manage_snippets(self):
+        """Kleiner Editor für die eigenen Bausteine."""
+        trans = TRANSLATIONS[self.language]
+        window = tk.Toplevel(self.root)
+        window.title(trans['snippet_manage'])
+        window.transient(self.root.winfo_toplevel())
+        window.geometry('640x420')
+        frame = ttk.Frame(window, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        left = ttk.Frame(frame)
+        left.pack(side=tk.LEFT, fill=tk.Y)
+        listbox = tk.Listbox(left, width=24, exportselection=False)
+        listbox.pack(fill=tk.BOTH, expand=True)
+
+        right = ttk.Frame(frame, padding=(10, 0, 0, 0))
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        ttk.Label(right, text=trans['snippet_name']).pack(anchor=tk.W)
+        name_var = tk.StringVar()
+        ttk.Entry(right, textvariable=name_var).pack(fill=tk.X)
+        ttk.Label(right, text=trans['snippet_text']).pack(
+            anchor=tk.W, pady=(8, 0)
+        )
+        editor = tk.Text(right, height=10, wrap=tk.WORD, undo=True)
+        editor.pack(fill=tk.BOTH, expand=True)
+
+        entwuerfe = [dict(snippet) for snippet in self.snippets]
+
+        def fill_list(select=0):
+            listbox.delete(0, tk.END)
+            for snippet in entwuerfe:
+                listbox.insert(tk.END, snippet['name'])
+            if entwuerfe:
+                index = max(0, min(select, len(entwuerfe) - 1))
+                listbox.selection_set(index)
+                show(index)
+
+        def show(index):
+            name_var.set(entwuerfe[index]['name'])
+            editor.delete('1.0', tk.END)
+            editor.insert('1.0', entwuerfe[index]['text'])
+            editor.edit_reset()
+
+        def on_select(event=None):
+            selection = listbox.curselection()
+            if selection:
+                show(selection[0])
+
+        def apply_edit():
+            selection = listbox.curselection()
+            name = name_var.get().strip()
+            text = editor.get('1.0', tk.END).strip()
+            if not selection or not name or not text:
+                return
+            entwuerfe[selection[0]] = {'name': name[:40], 'text': text}
+            fill_list(selection[0])
+
+        def add_entry():
+            entwuerfe.append({
+                'name': trans['snippet_new'], 'text': trans['snippet_new'],
+            })
+            fill_list(len(entwuerfe) - 1)
+
+        def remove_entry():
+            selection = listbox.curselection()
+            if selection:
+                entwuerfe.pop(selection[0])
+                fill_list(max(0, selection[0] - 1))
+
+        def restore_defaults():
+            entwuerfe.clear()
+            entwuerfe.extend(self.normalize_snippets(None, self.language))
+            fill_list(0)
+
+        def save_and_close():
+            apply_edit()
+            self.snippets = [dict(snippet) for snippet in entwuerfe]
+            self.save_config()
+            window.destroy()
+
+        listbox.bind('<<ListboxSelect>>', on_select)
+        buttons = ttk.Frame(window, padding=(10, 0, 10, 10))
+        buttons.pack(fill=tk.X)
+        for label_key, action in (
+            ('snippet_add', add_entry),
+            ('snippet_apply', apply_edit),
+            ('snippet_remove', remove_entry),
+            ('snippet_defaults', restore_defaults),
+        ):
+            ttk.Button(
+                buttons, text=trans[label_key], command=action
+            ).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(
+            buttons, text=trans['snippet_save'], command=save_and_close
+        ).pack(side=tk.RIGHT)
+        fill_list(0)
+
     def open_fact_conflicts(self):
         trans = TRANSLATIONS[self.language]
         conflicts = (
@@ -3870,6 +4074,7 @@ class ProductGeneratorGUI:
         self.apply_assistant_button.config(text=trans['apply_assistant'])
         self.fact_conflicts_button.config(text=trans['fact_conflicts'])
         self.buyback_button.config(text=trans['buyback_check'])
+        self.snippet_button.config(text=trans['snippet_button'])
         self.condition_combo.configure(
             values=trans['condition_values'].split('|')
         )
