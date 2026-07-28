@@ -83,10 +83,18 @@ PLATFORM_IMAGE_LIMITS = {
 # beantworten automatisierte Abrufe mit HTTP 403, ihre Parameter liessen sich
 # nicht pruefen. Ein direkter Suchlink kann ergaenzt werden, sobald das Muster
 # belegt ist.
+# (Name, Adressvorlage, benoetigte Angabe)
+#   identifier – nur mit ISBN oder EAN aufrufbar
+#   query      – Freitext; nimmt die Kennung, sonst den Produktnamen
+#   none       – Einstiegsseite, Muster nicht belegt
 BUYBACK_SERVICES = (
-    ('momox', 'https://www.momox.de/'),
-    ('medimops', 'https://www.medimops.de/'),
-    ('rebuy', 'https://www.rebuy.de/verkaufen'),
+    ('momox', 'https://www.momox.de/offer/{value}', 'identifier'),
+    (
+        'medimops',
+        'https://www.medimops.de/produkte-C0/?fcIsSearch=1&searchparam={value}',
+        'query',
+    ),
+    ('rebuy', 'https://www.rebuy.de/verkaufen', 'none'),
 )
 
 OWN_IMAGE_MAX_EDGE = 2000
@@ -432,7 +440,8 @@ TRANSLATIONS = {
         "apply_assistant": "Angaben in Entwürfe übernehmen",
         "fact_conflicts": "Widersprüche prüfen",
         "buyback_check": "💶 Ankaufspreis prüfen",
-        "buyback_copied": "Kennung in die Zwischenablage gelegt:",
+        "buyback_copied": "In die Zwischenablage gelegt:",
+        "buyback_opened": "Ankaufspreis geöffnet bei",
         "no_fact_conflicts": "Keine unbestätigten Datenkonflikte vorhanden.",
         "confirm_fact": "Ausgewählten Wert bestätigen",
         "completeness_ready": "Entwurf vollständig prüfbar",
@@ -854,9 +863,9 @@ class ProductGenerator:
                     "* [Additional discs]"
                 )
                 footer = (
-                    "The disc and case are in **[like new / very good / good / "
-                    "used]** condition.\n\n"
-                    "Scratches are **[not present / slight / visible]**. "
+                    "The disc and case are in **[new / like new / very good / "
+                    "good / used]** condition.\n\n"
+                    "Scratches are **[none / slight / visible]**. "
                     "Playback was **[tested successfully / not tested]**.\n\n"
                     "Feel free to contact me with any questions."
                 )
@@ -867,9 +876,11 @@ class ProductGenerator:
                     "* [Cable, power supply or other accessories]"
                 )
                 footer = (
-                    "The item is in **[very good / good / used]** condition and "
-                    "**[works perfectly / has the following defects: ...]**.\n\n"
-                    "Normal signs of use are **[present / not present]**.\n\n"
+                    "The item is in **[new / like new / very good / good / "
+                    "used]** condition and **[is sealed in its original "
+                    "packaging / works perfectly / has the following "
+                    "defects: ...]**.\n\n"
+                    "Signs of use are **[none / slight / clearly visible]**.\n\n"
                     "Feel free to contact me with any questions."
                 )
             contents_heading = "### Included"
@@ -939,19 +950,22 @@ class ProductGenerator:
                 )
             elif is_physical_media:
                 footer = (
-                    "Datenträger und Hülle befinden sich in **[neuwertigem / "
-                    "sehr gutem / gutem / gebrauchtem]** Zustand.\n\n"
-                    "Kratzer sind **[nicht vorhanden / leicht vorhanden / "
+                    "Datenträger und Hülle befinden sich in **[neuem / "
+                    "neuwertigem / sehr gutem / gutem / gebrauchtem]** "
+                    "Zustand.\n\n"
+                    "Kratzer sind **[keine vorhanden / leicht vorhanden / "
                     "sichtbar vorhanden]**. Die Wiedergabe wurde "
                     "**[erfolgreich getestet / nicht getestet]**.\n\n"
                     "Bei Fragen einfach melden."
                 )
             else:
                 footer = (
-                    "Der Artikel befindet sich in **[sehr gutem / gutem / "
-                    "gebrauchtem]** Zustand und **[funktioniert einwandfrei / hat "
-                    "folgende Einschränkungen: ...]**.\n\n"
-                    "Normale Gebrauchsspuren sind **[vorhanden / nicht vorhanden]**.\n\n"
+                    "Der Artikel befindet sich in **[neuem / neuwertigem / "
+                    "sehr gutem / gutem / gebrauchtem]** Zustand und "
+                    "**[ist ungeöffnet originalverpackt / funktioniert "
+                    "einwandfrei / hat folgende Einschränkungen: ...]**.\n\n"
+                    "Gebrauchsspuren sind **[keine vorhanden / leicht "
+                    "vorhanden / deutlich vorhanden]**.\n\n"
                     "Bei Fragen einfach melden."
                 )
             contents_heading = "### Lieferumfang"
@@ -2698,23 +2712,33 @@ class ProductGeneratorGUI:
             return typed
         return ''
 
+    def buyback_query(self):
+        """Freitext für Dienste ohne Kennungssuche: Kennung oder Name."""
+        return self.product_identifier() or (
+            self.selected_variant or {}
+        ).get('name', '').strip()
+
     def update_buyback_state(self):
-        """Der Knopf ist nur bei vorhandener ISBN oder EAN nutzbar."""
+        """Nutzbar, sobald irgendetwas Nachschlagbares vorliegt."""
         if not hasattr(self, 'buyback_button'):
             return
         self.buyback_button.config(
-            state=tk.NORMAL if self.product_identifier() else tk.DISABLED
+            state=tk.NORMAL if self.buyback_query() else tk.DISABLED
         )
 
     def show_buyback_menu(self):
         identifier = self.product_identifier()
-        if not identifier:
+        if not self.buyback_query():
             return
         menu = tk.Menu(self.root, tearoff=0)
-        for name, url in BUYBACK_SERVICES:
+        for name, template, needs in BUYBACK_SERVICES:
             menu.add_command(
                 label=name,
-                command=lambda target=url: self.open_buyback_service(target),
+                # Ohne ISBN/EAN ist die Kennungssuche nicht aufrufbar.
+                state=tk.NORMAL if (needs != 'identifier' or identifier)
+                else tk.DISABLED,
+                command=lambda t=template, n=needs, l=name:
+                    self.open_buyback_service(t, n, l),
             )
         try:
             menu.tk_popup(
@@ -2725,21 +2749,37 @@ class ProductGeneratorGUI:
         finally:
             menu.grab_release()
 
-    def open_buyback_service(self, url):
-        """Öffnet den Dienst und legt die Kennung in die Zwischenablage.
+    def open_buyback_service(self, template, needs, name=''):
+        """Öffnet den Ankaufsdienst mit der passenden Adresse.
 
-        Bewusst kein Abruf: die Dienste bieten keine offene Schnittstelle, und
-        ihre Seiten weisen automatisierte Zugriffe ab. Der Preis wird also
+        Bewusst kein Abruf: die Dienste bieten keine offene Schnittstelle und
+        weisen automatisierte Zugriffe mit HTTP 403 ab. Der Preis wird also
         gelesen, nicht ausgewertet.
         """
-        identifier = self.product_identifier()
-        if not identifier:
-            return
         trans = TRANSLATIONS[self.language]
-        self.root.clipboard_clear()
-        self.root.clipboard_append(identifier)
-        webbrowser.open(url)
-        self.status_var.set(f"{trans['buyback_copied']} {identifier}")
+        if needs == 'identifier':
+            value = self.product_identifier()
+            if not value:
+                return
+            webbrowser.open(template.format(value=urllib.parse.quote(value)))
+            self.status_var.set(f"{trans['buyback_opened']} {name}")
+            return
+        if needs == 'query':
+            value = self.buyback_query()
+            if not value:
+                return
+            webbrowser.open(
+                template.format(value=urllib.parse.quote_plus(value))
+            )
+            self.status_var.set(f"{trans['buyback_opened']} {name}")
+            return
+        # Ohne belegtes Adressmuster bleibt das Einfügen von Hand.
+        value = self.buyback_query()
+        if value:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(value)
+        webbrowser.open(template)
+        self.status_var.set(f"{trans['buyback_copied']} {value}")
 
     def open_fact_conflicts(self):
         trans = TRANSLATIONS[self.language]

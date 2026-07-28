@@ -38,11 +38,21 @@ Werkzeug aus Geizhals, Amazon, Wikipedia, der DNB und der eBay-API bezieht.
 
 ### Hinzugefügt: Ankaufspreise nachschlagen
 
-Für Bücher und Medien öffnet **Ankaufspreis prüfen** momox, medimops oder
-rebuy im Browser und legt ISBN beziehungsweise EAN in die Zwischenablage.
-Ankaufspreise sind eine sinnvolle Untergrenze für die eigene Preisfindung.
-Abgerufen oder ausgewertet wird nichts – die Dienste weisen automatisierte
-Zugriffe ohnehin ab.
+**Ankaufspreis prüfen** öffnet momox, medimops oder rebuy direkt beim
+gesuchten Artikel: momox über ISBN beziehungsweise EAN, medimops als
+Textsuche, die ohne Kennung auf den Produktnamen zurückfällt. Ankaufspreise
+sind eine sinnvolle Untergrenze für die eigene Preisfindung. Abgerufen oder
+ausgewertet wird nichts – die Dienste weisen automatisierte Zugriffe ab.
+
+### Behoben: Neuware war im Entwurf nicht vorgesehen
+
+Der Zustandssatz bot bei gewöhnlichen Artikeln nur „sehr gut / gut /
+gebraucht“ an, bei Medien kein „neu“ – obwohl die Auswahlliste des
+Assistenten „Neu“ seit jeher kennt. Beide Vorlagen nennen nun auch neuem und
+neuwertigem Zustand sowie „ist ungeöffnet originalverpackt“, und aus
+„Normale Gebrauchsspuren sind [vorhanden / nicht vorhanden]“ wurde
+„Gebrauchsspuren sind [keine vorhanden / …]“. Das Werkzeug ist nicht auf
+Gebrauchtware beschränkt.
 
 ### Geprüft und verworfen: weitere Verkaufsplattformen
 

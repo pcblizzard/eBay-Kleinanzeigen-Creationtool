@@ -99,7 +99,7 @@ class ProductGeneratorTests(unittest.TestCase):
         )
         # Der Zustand steht konkret da, die Auswahlsaetze sind weg.
         self.assertIn("### Zustand\n\nNeu", merged)
-        self.assertNotIn("**[sehr gutem", merged)
+        self.assertNotIn("**[neuem / neuwertigem", merged)
         self.assertNotIn("Normale Gebrauchsspuren", merged)
         self.assertNotIn("Nicht Zutreffendes", merged)
         # Der Lieferumfang steht genau einmal, als Stichpunkte.
@@ -124,7 +124,7 @@ class ProductGeneratorTests(unittest.TestCase):
         merged = self.assistant().merge_assistant_details(
             self.draft_body(), "", [], ""
         )
-        self.assertIn("**[sehr gutem", merged)
+        self.assertIn("**[neuem / neuwertigem", merged)
         self.assertIn("Nicht Zutreffendes", merged)
 
     def test_price_carries_the_kleinanzeigen_price_type(self):
@@ -336,7 +336,12 @@ class ProductGeneratorTests(unittest.TestCase):
         self.assertIn("* Display: 6,1 Zoll Dynamic AMOLED 2X", draft)
         self.assertIn("### Lieferumfang", draft)
         self.assertIn("[Originalverpackung]", draft)
-        self.assertIn("[sehr gutem / gutem / gebrauchtem]", draft)
+        # Neuware muss genauso anbietbar sein wie Gebrauchtes.
+        self.assertIn(
+            "[neuem / neuwertigem / sehr gutem / gutem / gebrauchtem]",
+            draft,
+        )
+        self.assertIn("ungeöffnet originalverpackt", draft)
         self.assertNotIn(WARRANTY_CLAUSE, draft)
 
     def test_book_draft_uses_book_specific_fields(self):
@@ -1563,9 +1568,41 @@ class BuybackTests(unittest.TestCase):
         for forbidden in ("urlopen", "fetch_url", "fetch_binary", "Request("):
             self.assertNotIn(forbidden, source)
 
-    def test_services_are_reachable_entry_pages(self):
-        for name, url in BUYBACK_SERVICES:
+    def test_service_templates_are_well_formed(self):
+        for name, template, needs in BUYBACK_SERVICES:
             self.assertTrue(name)
-            self.assertTrue(url.startswith("https://"), url)
-            # Keine geratenen Suchparameter, die stillschweigend brechen.
-            self.assertNotIn("?", url)
+            self.assertTrue(template.startswith("https://"), template)
+            self.assertIn(needs, ("identifier", "query", "none"))
+            # Vorlagen mit Platzhalter muessen ihn genau einmal fuehren.
+            self.assertEqual(
+                template.count("{value}"), 0 if needs == "none" else 1
+            )
+
+    def test_the_identifier_search_uses_the_verified_pattern(self):
+        gui = self.controller({"isbn": "978-3-442-31810-6"})
+        gui.language = "de"
+        gui.status_var = SimpleNamespace(set=lambda text: None)
+        template = dict(
+            (name, tpl) for name, tpl, _ in BUYBACK_SERVICES
+        )["momox"]
+        geoeffnet = []
+        with patch("product_generator_gui.webbrowser.open", geoeffnet.append):
+            gui.open_buyback_service(template, "identifier", "momox")
+        self.assertEqual(
+            geoeffnet, ["https://www.momox.de/offer/9783442318106"]
+        )
+
+    def test_the_text_search_falls_back_to_the_product_name(self):
+        gui = self.controller({"name": "XBox One"})
+        gui.language = "de"
+        gui.status_var = SimpleNamespace(set=lambda text: None)
+        template = dict(
+            (name, tpl) for name, tpl, _ in BUYBACK_SERVICES
+        )["medimops"]
+        geoeffnet = []
+        with patch("product_generator_gui.webbrowser.open", geoeffnet.append):
+            gui.open_buyback_service(template, "query", "medimops")
+        self.assertEqual(geoeffnet, [
+            "https://www.medimops.de/produkte-C0/"
+            "?fcIsSearch=1&searchparam=XBox+One"
+        ])
