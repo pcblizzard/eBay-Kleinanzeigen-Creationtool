@@ -32,6 +32,23 @@ from listing_store import (
 )
 
 
+def display_available():
+    """Prüft, ob Tk ein Fenster öffnen kann.
+
+    Auf Buildservern ohne X-Server ist das nicht der Fall; die betroffenen
+    Tests werden dann übersprungen statt zu scheitern.
+    """
+    try:
+        root = tk.Tk()
+    except Exception:
+        return False
+    root.destroy()
+    return True
+
+
+DISPLAY_AVAILABLE = display_available()
+
+
 class ProductGeneratorTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -275,6 +292,7 @@ class ProductGeneratorTests(unittest.TestCase):
         upload.set_input_files.assert_called_once_with([str(photo)])
         self.assertIn("photos", report.filled)
 
+    @unittest.skipUnless(DISPLAY_AVAILABLE, "kein Display verfügbar")
     def test_menubar_entries_start_at_index_zero(self):
         """Ein Tearoff-Eintrag wuerde alle Menue-Indizes verschieben.
 

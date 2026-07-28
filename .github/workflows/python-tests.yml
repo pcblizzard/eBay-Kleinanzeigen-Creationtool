@@ -35,10 +35,21 @@ jobs:
 
       - name: Compile Python modules
         run: >-
-          python -m py_compile
-          product_generator_gui.py listing_store.py __main__.py
+          python -m py_compile product_generator_gui.py listing_store.py
+          kleinanzeigen_assistant.py __main__.py
+
+      # Ohne X-Server kann Tk kein Fenster oeffnen; die GUI-Tests wuerden sich
+      # sonst stillschweigend ueberspringen statt zu pruefen.
+      - name: Install virtual framebuffer
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
 
       - name: Run tests
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m unittest -v
+
+      - name: Run tests
+        if: runner.os != 'Linux'
         run: python -m unittest -v
 
   dependency-audit:

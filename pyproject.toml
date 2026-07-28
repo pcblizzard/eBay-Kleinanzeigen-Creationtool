@@ -9,11 +9,6 @@ description = "GUI-Tool zur Erstellung prüfbarer Produktbeschreibungen für eBa
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["Pillow>=10.0", "keyring>=25.0"]
-
-[project.optional-dependencies]
-# Assistiertes Ausfuellen des Kleinanzeigen-Formulars im sichtbaren Browser.
-# Zusaetzlich noetig: python -m playwright install chromium
-browser = ["playwright>=1.40"]
 license = {text = "MIT"}
 authors = [
     {name = "Michael"}
@@ -34,6 +29,13 @@ classifiers = [
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
 ]
+
+# Muss hinter allen [project]-Schluesseln stehen: eine eigene Tabelle beendet
+# die vorherige, spaetere Schluessel landen sonst in der falschen Tabelle.
+[project.optional-dependencies]
+# Assistiertes Ausfuellen des Kleinanzeigen-Formulars im sichtbaren Browser.
+# Zusaetzlich noetig: python -m playwright install chromium
+browser = ["playwright>=1.40"]
 
 [project.urls]
 Homepage = "https://github.com/pcblizzard/eBay-Kleinanzeigen-Creationtool"
