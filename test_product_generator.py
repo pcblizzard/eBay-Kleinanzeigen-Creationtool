@@ -1,8 +1,5 @@
-import inspect
 import json
-import queue
 import tempfile
-import threading
 import tkinter as tk
 import unittest
 import unicodedata
@@ -21,12 +18,6 @@ from product_generator_gui import (
     WARRANTY_CLAUSE,
     default_products_file,
     prepare_own_image,
-)
-from kleinanzeigen_assistant import (
-    BrowserSession,
-    FormData,
-    KleinanzeigenFormAssistant,
-    price_type_from_label,
 )
 from listing_store import (
     ListingStore,
@@ -228,109 +219,6 @@ class ProductGeneratorTests(unittest.TestCase):
             finally:
                 store.close()
 
-    def test_price_type_maps_to_the_kleinanzeigen_form_value(self):
-        for label, expected in (
-            ("VB", "NEGOTIABLE"),
-            ("Festpreis", "FIXED"),
-            ("Zu verschenken", "GIVE_AWAY"),
-            ("", "NEGOTIABLE"),
-        ):
-            self.assertEqual(
-                price_type_from_label(label, "Zu verschenken", "Festpreis"),
-                expected,
-            )
-
-    def test_form_assistant_reports_fields_it_cannot_find(self):
-        """Nicht gefundene Felder muessen benannt, nicht verschwiegen werden.
-
-        Kleinanzeigen benennt Formularfelder gelegentlich um; der Nutzer soll
-        dann sehen, was er von Hand nachtragen muss.
-        """
-        assistant = KleinanzeigenFormAssistant.__new__(
-            KleinanzeigenFormAssistant
-        )
-        assistant.page = object()
-        found = {}
-
-        def locate(field_name):
-            return found.get(field_name)
-
-        assistant._locate = locate
-        assistant._first_visible = lambda selectors: None
-        title = Mock()
-        found['title'] = title
-        report = assistant.fill(
-            FormData(title="Fantec QB-X2US3R", description="Text", price="50")
-        )
-        title.fill.assert_called_once_with("Fantec QB-X2US3R")
-        self.assertIn("title", report.filled)
-        self.assertIn("description", report.skipped)
-        self.assertIn("price", report.skipped)
-        self.assertIn("price_type", report.skipped)
-        self.assertFalse(report.complete)
-
-    def test_form_assistant_never_submits_the_form(self):
-        """Das Absenden bleibt ausdruecklich beim Nutzer.
-
-        Geprueft wird nur die Klasse, die die Seite bedient - Methodennamen
-        anderer Klassen wie BrowserSession.submit sind unbedenklich.
-        """
-        source = inspect.getsource(KleinanzeigenFormAssistant)
-        for forbidden in (".click(", ".press(", ".dispatch_event(", ".tap("):
-            self.assertNotIn(forbidden, source)
-
-    def test_browser_calls_all_happen_in_one_thread(self):
-        """Playwrights Sync-API bindet ihren Event-Loop an einen Thread.
-
-        Wurde sie aus wechselnden Threads bedient, brach die Verbindung zum
-        Browser mit „coroutine was never awaited" und EPIPE ab.
-        """
-        threads = []
-        done = threading.Event()
-        session = BrowserSession.__new__(BrowserSession)
-        session.assistant = SimpleNamespace(
-            close=lambda: threads.append(threading.current_thread().name)
-        )
-        session._jobs = queue.Queue()
-        session._thread = threading.Thread(
-            target=session._worker, daemon=True, name="test-browser"
-        )
-        session._thread.start()
-        for _ in range(3):
-            session.submit(
-                lambda assistant: threading.current_thread().name,
-                on_success=threads.append,
-            )
-        session.submit(lambda assistant: None, on_success=lambda r: done.set())
-        self.assertTrue(done.wait(5))
-        session.shutdown()
-        session._thread.join(5)
-        # Drei Auftraege, ein Schliessen - alles im selben Thread.
-        self.assertEqual(len(threads), 4)
-        self.assertEqual(set(threads), {"test-browser"})
-
-    def test_photos_are_attached_through_the_file_input(self):
-        assistant = KleinanzeigenFormAssistant.__new__(
-            KleinanzeigenFormAssistant
-        )
-        upload = Mock()
-        upload.count.return_value = 1
-        page = Mock()
-        page.locator.return_value.first = upload
-        assistant.page = page
-        assistant._locate = lambda name: None
-        assistant._first_visible = lambda selectors: None
-        with tempfile.TemporaryDirectory() as folder:
-            photo = Path(folder) / "01-hauptbild.jpg"
-            photo.write_bytes(b"nicht wirklich ein Bild")
-            report = assistant.fill(
-                FormData(photos=[photo, Path(folder) / "fehlt.jpg"])
-            )
-        # Nur vorhandene Dateien werden uebergeben.
-        upload.set_input_files.assert_called_once_with([str(photo)])
-        self.assertIn("photos", report.filled)
-
-    @unittest.skipUnless(DISPLAY_AVAILABLE, "kein Display verfügbar")
     def test_menubar_entries_start_at_index_zero(self):
         """Ein Tearoff-Eintrag wuerde alle Menue-Indizes verschieben.
 

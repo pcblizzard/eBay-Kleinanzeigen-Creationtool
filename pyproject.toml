@@ -30,24 +30,13 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
 ]
 
-# Muss hinter allen [project]-Schluesseln stehen: eine eigene Tabelle beendet
-# die vorherige, spaetere Schluessel landen sonst in der falschen Tabelle.
-[project.optional-dependencies]
-# Assistiertes Ausfuellen des Kleinanzeigen-Formulars im sichtbaren Browser.
-# Zusaetzlich noetig: python -m playwright install chromium
-browser = ["playwright>=1.40"]
-
 [project.urls]
 Homepage = "https://github.com/pcblizzard/eBay-Kleinanzeigen-Creationtool"
 Repository = "https://github.com/pcblizzard/eBay-Kleinanzeigen-Creationtool.git"
 "Bug Tracker" = "https://github.com/pcblizzard/eBay-Kleinanzeigen-Creationtool/issues"
 
 [tool.setuptools]
-py-modules = [
-    "product_generator_gui",
-    "listing_store",
-    "kleinanzeigen_assistant",
-]
+py-modules = ["product_generator_gui", "listing_store"]
 
 # Die Produktdatenbank muss mitinstalliert werden, sonst startet das
 # Konsolenskript ohne lokale Treffer. Der Pfad wird von

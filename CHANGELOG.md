@@ -4,6 +4,28 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 
 ## Unveröffentlicht
 
+### Nicht umsetzbar: Anzeigen automatisch bei Kleinanzeigen einstellen
+
+Ein assistierter Browser-Ansatz (Playwright, sichtbares Fenster, eigenes
+Profil, Absenden von Hand) wurde umgesetzt und wieder entfernt. Kleinanzeigen
+erkannte die Automatisierung bereits **beim Anmelden** und sperrte den
+IP-Bereich vorübergehend – das Formular wurde nie erreicht. Das Benutzerkonto
+blieb unberührt.
+
+Damit ist der Stand für Kleinanzeigen:
+
+- Keine Schreib-Schnittstelle. Die API von kleinanzeigen-agent.de ist laut
+  eigener Dokumentation ausschließlich lesend, alle Endpunkte sind `GET`.
+- Verfügbare Projekte (DanielWTE/ebay-kleinanzeigen-api, Apify, ScrapingBee,
+  Octoparse, Automatio) lesen ausnahmslos Inserate aus; keines stellt welche
+  ein.
+- Browser-Automatisierung wird erkannt. Sie zuverlässig zu machen erforderte
+  das Aushebeln der Bot-Erkennung; das wird bewusst nicht gebaut, weil es die
+  Nutzungsbedingungen verletzt und das Konto gefährdet.
+
+Anzeigen werden bei Kleinanzeigen daher von Hand eingestellt. Das Werkzeug
+bereitet dafür Text und Fotos vollständig vor.
+
 ## [0.3.0] - 2026-07-27
 
 ### Behoben
