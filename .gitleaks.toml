@@ -26,6 +26,9 @@ werden nie im Quelltext hinterlegt - siehe ProductGeneratorGUI.get_secret.
 Die Ausnahme ist absichtlich auf genau diese Zeichenfolge begrenzt, damit
 echte Funde weiterhin gemeldet werden.
 """
+# Ohne regexTarget vergleicht gitleaks nur den erkannten Geheimniswert; hier
+# muss die ganze Zeile geprueft werden, weil dort die Variablennamen stehen.
+regexTarget = "line"
 regexes = [
     '''client_id, client_secret''',
 ]
