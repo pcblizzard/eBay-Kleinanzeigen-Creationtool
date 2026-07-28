@@ -1461,6 +1461,38 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class AttributeTextTests(unittest.TestCase):
+    """Merkmale der Kleinanzeigen-API: verschachtelt und doppelt."""
+
+    def test_a_nested_value_is_shown_as_its_label(self):
+        text = ProductGeneratorGUI.attribute_text
+        self.assertEqual(
+            text({'value': 'google_handy', 'label': 'Google'}), 'Google'
+        )
+        self.assertEqual(text('Schwarz'), 'Schwarz')
+        self.assertEqual(text({'value': 'new'}), 'new')
+        self.assertEqual(text({}), '')
+        self.assertEqual(text(None), '')
+
+    def test_a_list_of_nested_values_is_joined(self):
+        self.assertEqual(
+            ProductGeneratorGUI.attribute_text([
+                {'label': 'Schwarz'}, {'label': 'Weiss'}, {},
+            ]),
+            'Schwarz, Weiss',
+        )
+
+    def test_a_field_is_only_listed_once(self):
+        facts, seen = [], set()
+        add = ProductGeneratorGUI.add_fact
+        add(facts, seen, 'Art', 'Google')
+        # Dasselbe Feld aus "attributes" - frueher stand es ein zweites Mal da.
+        add(facts, seen, 'art', 'Google')
+        add(facts, seen, 'Farbe', 'Schwarz')
+        add(facts, seen, 'Zustand', '')
+        self.assertEqual(facts, ['Art: Google', 'Farbe: Schwarz'])
+
+
 class UrlAndMarkupTests(unittest.TestCase):
     """Von CodeQL gemeldete Muster: Teilzeichenketten statt Hostnamen."""
 

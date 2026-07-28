@@ -4918,6 +4918,41 @@ class ProductGeneratorGUI:
             'NFC', html_lib.unescape(str(value or ''))
         ).strip()
 
+    @classmethod
+    def attribute_text(cls, value):
+        """Merkmalswert lesbar machen.
+
+        Die Kleinanzeigen-API liefert denselben Wert je nach Feld flach
+        ("Google") oder als Objekt ({'value': 'google_handy', 'label':
+        'Google'}). Ohne diese Umwandlung landete die Python-Darstellung des
+        Objekts woertlich im Entwurf.
+        """
+        if isinstance(value, dict):
+            for key in ('label', 'localized_label', 'value_label', 'name',
+                        'value'):
+                if value.get(key) not in (None, '', [], {}):
+                    return cls.attribute_text(value[key])
+            return ''
+        if isinstance(value, (list, tuple)):
+            parts = [cls.attribute_text(item) for item in value]
+            return ", ".join(part for part in parts if part)
+        if value in (None, '', [], {}):
+            return ''
+        return cls.normalize_text(value)
+
+    @staticmethod
+    def add_fact(facts, seen, label, value):
+        """Merkmal aufnehmen, sofern das Feld noch nicht belegt ist.
+
+        ``details`` und ``attributes`` beschreiben dieselben Felder. Ohne
+        diese Sperre stand jedes Merkmal doppelt im Entwurf.
+        """
+        key = label.strip().casefold()
+        if not key or not value or key in seen:
+            return
+        seen.add(key)
+        facts.append(f"{label.strip()}: {value}")
+
     def search_spelling_variants(self, provider, search_term):
         result_groups = []
         last_error = None
@@ -4964,29 +4999,30 @@ class ProductGeneratorGUI:
             if not title:
                 continue
             facts = []
+            seen_fields = set()
             category = ad.get('category') or {}
             if category.get('name'):
                 facts.append(f"Kategorie: {category['name']}")
+                seen_fields.add('kategorie')
             details = ad.get('details') or {}
             if isinstance(details, dict):
                 for label, value in list(details.items())[:15]:
-                    if value not in (None, '', [], {}):
-                        facts.append(f"{label}: {value}")
+                    self.add_fact(
+                        facts, seen_fields, str(label),
+                        self.attribute_text(value),
+                    )
             for attribute in (ad.get('attributes') or [])[:15]:
                 if not isinstance(attribute, dict):
                     continue
-                label = (
+                label = self.attribute_text(
                     attribute.get('label') or attribute.get('name')
                     or attribute.get('key')
                 )
-                value = (
+                value = self.attribute_text(
                     attribute.get('value_label') or attribute.get('value')
                     or attribute.get('values')
                 )
-                if label and value not in (None, '', [], {}):
-                    if isinstance(value, list):
-                        value = ", ".join(map(str, value))
-                    facts.append(f"{label}: {value}")
+                self.add_fact(facts, seen_fields, label, value)
             location = ad.get('location') or {}
             if location.get('city') or location.get('name'):
                 facts.append(
