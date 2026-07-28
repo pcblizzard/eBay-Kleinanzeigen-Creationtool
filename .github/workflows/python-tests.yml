@@ -36,7 +36,7 @@ jobs:
       - name: Compile Python modules
         run: >-
           python -m py_compile product_generator_gui.py listing_store.py
-          __main__.py
+          ebay_listing.py __main__.py
 
       # Ohne X-Server kann Tk kein Fenster oeffnen; die GUI-Tests wuerden sich
       # sonst stillschweigend ueberspringen statt zu pruefen.

@@ -36,7 +36,7 @@ Repository = "https://github.com/pcblizzard/eBay-Kleinanzeigen-Creationtool.git"
 "Bug Tracker" = "https://github.com/pcblizzard/eBay-Kleinanzeigen-Creationtool/issues"
 
 [tool.setuptools]
-py-modules = ["product_generator_gui", "listing_store"]
+py-modules = ["product_generator_gui", "listing_store", "ebay_listing"]
 
 # Die Produktdatenbank muss mitinstalliert werden, sonst startet das
 # Konsolenskript ohne lokale Treffer. Der Pfad wird von
