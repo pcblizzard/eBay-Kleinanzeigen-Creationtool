@@ -33,6 +33,12 @@ import urllib.error
 import xml.etree.ElementTree as ET
 
 from listing_store import ListingStore, PLATFORM_PROFILES, safe_filename
+from kleinanzeigen_assistant import (
+    FormData,
+    KleinanzeigenFormAssistant,
+    PlaywrightMissing,
+    price_type_from_label,
+)
 
 try:
     from PIL import Image, ImageOps, ImageTk
@@ -90,9 +96,10 @@ def prepare_own_image(source_path, target_path, max_edge=OWN_IMAGE_MAX_EDGE):
             image = image.convert('RGB')
         if max_edge and max(image.size) > max_edge:
             image.thumbnail((max_edge, max_edge), Image.LANCZOS)
-        # Ein frisches Bild ohne info-Dictionary traegt keine Metadaten mehr.
+        # Ein frisches Bild traegt kein info-Dictionary und damit keine
+        # Metadaten; paste kopiert nur die Bildpunkte.
         clean = Image.new(image.mode, image.size)
-        clean.putdata(list(image.getdata()))
+        clean.paste(image)
         if target.suffix.lower() in ('.jpg', '.jpeg'):
             clean.save(target, quality=OWN_IMAGE_QUALITY, optimize=True)
         else:
@@ -162,6 +169,34 @@ TRANSLATIONS = {
         "own_images_replace_note": (
             "Eigene Fotos ersetzen im Export die Herstellerbilder."
         ),
+        "browser_assist": "🌐 Bei Kleinanzeigen vorbereiten…",
+        "browser_assist_title": "Anzeige bei Kleinanzeigen vorbereiten",
+        "browser_assist_intro": (
+            "Es öffnet sich ein sichtbares Browserfenster mit einem eigenen "
+            "Profil dieser Anwendung.\n\n"
+            "1. Melde dich dort bei Kleinanzeigen an (nur beim ersten Mal).\n"
+            "2. Wähle die passende Kategorie, bis das Anzeigenformular "
+            "erscheint.\n"
+            "3. Klicke dann hier auf „Formular ausfüllen“.\n\n"
+            "Abgeschickt wird nichts: Prüfen und Veröffentlichen bleiben bei "
+            "dir. Beachte, dass Kleinanzeigen automatisierten Zugriff in "
+            "seinen Nutzungsbedingungen untersagt."
+        ),
+        "browser_assist_open": "Browser öffnen",
+        "browser_assist_fill": "Formular ausfüllen",
+        "browser_assist_close": "Browser schließen",
+        "browser_assist_filled": "Übertragen:",
+        "browser_assist_skipped": "Nicht gefunden:",
+        "browser_assist_none": (
+            "Kein Feld gefunden. Steht im Browser bereits das "
+            "Anzeigenformular offen?"
+        ),
+        "browser_assist_missing": (
+            "Playwright ist nicht installiert. Für den assistierten Modus:\n\n"
+            "python -m pip install playwright\n"
+            "python -m playwright install chromium"
+        ),
+        "browser_assist_running": "Browser läuft — Formular kann gefüllt werden.",
         "save_image_title": "Produktbild speichern",
         "image_saved": "Produktbild gespeichert:",
         "legal_frame": "Fester Hinweis (wird immer angehängt)",
@@ -334,6 +369,31 @@ TRANSLATIONS = {
         "own_images_replace_note": (
             "Own photos replace the manufacturer images in the export."
         ),
+        "browser_assist": "🌐 Prepare on Kleinanzeigen…",
+        "browser_assist_title": "Prepare listing on Kleinanzeigen",
+        "browser_assist_intro": (
+            "A visible browser window opens with a profile of its own.\n\n"
+            "1. Sign in to Kleinanzeigen there (only needed once).\n"
+            "2. Pick the category until the listing form appears.\n"
+            "3. Then click “Fill in form” here.\n\n"
+            "Nothing is submitted: reviewing and publishing stay with you. "
+            "Note that Kleinanzeigen prohibits automated access in its terms "
+            "of service."
+        ),
+        "browser_assist_open": "Open browser",
+        "browser_assist_fill": "Fill in form",
+        "browser_assist_close": "Close browser",
+        "browser_assist_filled": "Transferred:",
+        "browser_assist_skipped": "Not found:",
+        "browser_assist_none": (
+            "No field found. Is the listing form already open in the browser?"
+        ),
+        "browser_assist_missing": (
+            "Playwright is not installed. For the assisted mode:\n\n"
+            "python -m pip install playwright\n"
+            "python -m playwright install chromium"
+        ),
+        "browser_assist_running": "Browser is running — the form can be filled.",
         "save_image_title": "Save product image",
         "image_saved": "Product image saved:",
         "legal_frame": "Mandatory notice (always appended)",
@@ -5720,6 +5780,145 @@ class ProductGeneratorGUI:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def browser_form_data(self):
+        """Stellt die Angaben für das Kleinanzeigen-Formular zusammen."""
+        trans = TRANSLATIONS[self.language]
+        draft = self.platform_drafts.get('kleinanzeigen', {})
+        price_types = trans['price_type_values'].split('|')
+        amount = self.parse_price(self.asking_price_var.get())
+        return FormData(
+            title=draft.get('title', '').strip(),
+            # Der Pflichttext gehoert mit in die Beschreibung.
+            description=self.full_platform_description(
+                draft.get('description', '')
+            ),
+            price='' if amount is None else f"{amount:.0f}",
+            price_type=price_type_from_label(
+                self.price_type_var.get(), price_types[2], price_types[1]
+            ),
+            photos=[
+                image['path'] for image in self.own_images
+                if Path(image['path']).is_file()
+            ],
+        )
+
+    def open_browser_assistant(self):
+        """Assistiertes Vorbereiten der Anzeige im sichtbaren Browser."""
+        trans = TRANSLATIONS[self.language]
+        if not self.selected_variant or not self.product_record_id:
+            messagebox.showwarning(
+                trans['no_selection'], trans['no_selection']
+            )
+            return
+        self.save_visible_platform_draft()
+
+        window = tk.Toplevel(self.root)
+        window.title(trans['browser_assist_title'])
+        window.transient(self.root.winfo_toplevel())
+        frame = ttk.Frame(window, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            frame, text=trans['browser_assist_intro'],
+            wraplength=460, justify=tk.LEFT,
+        ).pack(fill=tk.X)
+        status_var = tk.StringVar()
+        ttk.Label(
+            frame, textvariable=status_var, wraplength=460,
+            justify=tk.LEFT, foreground='#555555',
+        ).pack(fill=tk.X, pady=(10, 0))
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill=tk.X, pady=(12, 0))
+
+        def report(message):
+            self.root.after(0, lambda: status_var.set(message))
+
+        def in_browser_thread(action):
+            """Playwright braucht einen eigenen Thread, Tk den seinen."""
+            threading.Thread(target=action, daemon=True).start()
+
+        def open_browser():
+            open_button.config(state=tk.DISABLED)
+
+            def run():
+                try:
+                    self._browser_assistant = KleinanzeigenFormAssistant(
+                        user_data_dir() / 'browser-profil'
+                    )
+                    self._browser_assistant.start()
+                    report(trans['browser_assist_running'])
+                    self.root.after(
+                        0, lambda: fill_button.config(state=tk.NORMAL)
+                    )
+                except PlaywrightMissing:
+                    self._browser_assistant = None
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        trans['browser_assist_title'],
+                        trans['browser_assist_missing'],
+                    ))
+                    self.root.after(
+                        0, lambda: open_button.config(state=tk.NORMAL)
+                    )
+                except Exception as exc:
+                    self._browser_assistant = None
+                    report(str(exc))
+                    self.root.after(
+                        0, lambda: open_button.config(state=tk.NORMAL)
+                    )
+
+            in_browser_thread(run)
+
+        def fill_form():
+            assistant = getattr(self, '_browser_assistant', None)
+            if assistant is None:
+                return
+            data = self.browser_form_data()
+
+            def run():
+                try:
+                    result = assistant.fill(data)
+                except Exception as exc:
+                    report(str(exc))
+                    return
+                lines = []
+                if result.filled:
+                    lines.append(
+                        f"{trans['browser_assist_filled']} "
+                        f"{', '.join(result.filled)}"
+                    )
+                if result.skipped:
+                    lines.append(
+                        f"{trans['browser_assist_skipped']} "
+                        f"{', '.join(result.skipped)}"
+                    )
+                report('\n'.join(lines) or trans['browser_assist_none'])
+
+            in_browser_thread(run)
+
+        def close_browser():
+            assistant = getattr(self, '_browser_assistant', None)
+            self._browser_assistant = None
+            fill_button.config(state=tk.DISABLED)
+            open_button.config(state=tk.NORMAL)
+            if assistant is not None:
+                in_browser_thread(assistant.close)
+
+        open_button = ttk.Button(
+            buttons, text=trans['browser_assist_open'], command=open_browser
+        )
+        open_button.pack(side=tk.LEFT)
+        fill_button = ttk.Button(
+            buttons, text=trans['browser_assist_fill'],
+            command=fill_form, state=tk.DISABLED,
+        )
+        fill_button.pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(
+            buttons, text=trans['browser_assist_close'],
+            command=close_browser,
+        ).pack(side=tk.LEFT, padx=(6, 0))
+        window.protocol("WM_DELETE_WINDOW", lambda: (
+            close_browser(), window.destroy()
+        ))
+
     def copy_listing(self):
         """Kopiert den vollständigen Beitrag inklusive Pflichttext."""
         trans = TRANSLATIONS[self.language]
@@ -5811,6 +6010,14 @@ class TabbedProductGeneratorGUI:
             ),
         )
         self.package_button.pack(side=tk.LEFT, padx=(6, 0))
+        self.browser_assist_button = ttk.Button(
+            toolbar,
+            text=TRANSLATIONS['de']['browser_assist'],
+            command=lambda: self.run_on_active(
+                ProductGeneratorGUI.open_browser_assistant
+            ),
+        )
+        self.browser_assist_button.pack(side=tk.LEFT, padx=(6, 0))
 
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
@@ -5856,6 +6063,7 @@ class TabbedProductGeneratorGUI:
         self.export_button.config(text=trans['export_button'])
         self.copy_button.config(text=trans['copy_button'])
         self.package_button.config(text=trans['export_package'])
+        self.browser_assist_button.config(text=trans['browser_assist'])
         self.file_menu.entryconfig(0, label=trans['menu_new'])
         self.file_menu.entryconfig(1, label=trans['menu_open'])
         self.file_menu.entryconfig(2, label=trans['menu_save'])

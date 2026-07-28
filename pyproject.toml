@@ -9,6 +9,11 @@ description = "GUI-Tool zur Erstellung prüfbarer Produktbeschreibungen für eBa
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["Pillow>=10.0", "keyring>=25.0"]
+
+[project.optional-dependencies]
+# Assistiertes Ausfuellen des Kleinanzeigen-Formulars im sichtbaren Browser.
+# Zusaetzlich noetig: python -m playwright install chromium
+browser = ["playwright>=1.40"]
 license = {text = "MIT"}
 authors = [
     {name = "Michael"}
@@ -36,7 +41,11 @@ Repository = "https://github.com/pcblizzard/eBay-Kleinanzeigen-Creationtool.git"
 "Bug Tracker" = "https://github.com/pcblizzard/eBay-Kleinanzeigen-Creationtool/issues"
 
 [tool.setuptools]
-py-modules = ["product_generator_gui", "listing_store"]
+py-modules = [
+    "product_generator_gui",
+    "listing_store",
+    "kleinanzeigen_assistant",
+]
 
 # Die Produktdatenbank muss mitinstalliert werden, sonst startet das
 # Konsolenskript ohne lokale Treffer. Der Pfad wird von

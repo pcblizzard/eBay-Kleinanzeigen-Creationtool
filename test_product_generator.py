@@ -19,6 +19,11 @@ from product_generator_gui import (
     default_products_file,
     prepare_own_image,
 )
+from kleinanzeigen_assistant import (
+    FormData,
+    KleinanzeigenFormAssistant,
+    price_type_from_label,
+)
 from listing_store import (
     ListingStore,
     PLATFORM_PROFILES,
@@ -201,6 +206,74 @@ class ProductGeneratorTests(unittest.TestCase):
                 self.assertTrue(paths[0].is_file())
             finally:
                 store.close()
+
+    def test_price_type_maps_to_the_kleinanzeigen_form_value(self):
+        for label, expected in (
+            ("VB", "NEGOTIABLE"),
+            ("Festpreis", "FIXED"),
+            ("Zu verschenken", "GIVE_AWAY"),
+            ("", "NEGOTIABLE"),
+        ):
+            self.assertEqual(
+                price_type_from_label(label, "Zu verschenken", "Festpreis"),
+                expected,
+            )
+
+    def test_form_assistant_reports_fields_it_cannot_find(self):
+        """Nicht gefundene Felder muessen benannt, nicht verschwiegen werden.
+
+        Kleinanzeigen benennt Formularfelder gelegentlich um; der Nutzer soll
+        dann sehen, was er von Hand nachtragen muss.
+        """
+        assistant = KleinanzeigenFormAssistant.__new__(
+            KleinanzeigenFormAssistant
+        )
+        assistant.page = object()
+        found = {}
+
+        def locate(field_name):
+            return found.get(field_name)
+
+        assistant._locate = locate
+        assistant._first_visible = lambda selectors: None
+        title = Mock()
+        found['title'] = title
+        report = assistant.fill(
+            FormData(title="Fantec QB-X2US3R", description="Text", price="50")
+        )
+        title.fill.assert_called_once_with("Fantec QB-X2US3R")
+        self.assertIn("title", report.filled)
+        self.assertIn("description", report.skipped)
+        self.assertIn("price", report.skipped)
+        self.assertIn("price_type", report.skipped)
+        self.assertFalse(report.complete)
+
+    def test_form_assistant_never_submits_the_form(self):
+        """Das Absenden bleibt ausdruecklich beim Nutzer."""
+        source = Path("kleinanzeigen_assistant.py").read_text(encoding="utf-8")
+        for forbidden in ("click()", ".press(", "submit("):
+            self.assertNotIn(forbidden, source)
+
+    def test_photos_are_attached_through_the_file_input(self):
+        assistant = KleinanzeigenFormAssistant.__new__(
+            KleinanzeigenFormAssistant
+        )
+        upload = Mock()
+        upload.count.return_value = 1
+        page = Mock()
+        page.locator.return_value.first = upload
+        assistant.page = page
+        assistant._locate = lambda name: None
+        assistant._first_visible = lambda selectors: None
+        with tempfile.TemporaryDirectory() as folder:
+            photo = Path(folder) / "01-hauptbild.jpg"
+            photo.write_bytes(b"nicht wirklich ein Bild")
+            report = assistant.fill(
+                FormData(photos=[photo, Path(folder) / "fehlt.jpg"])
+            )
+        # Nur vorhandene Dateien werden uebergeben.
+        upload.set_input_files.assert_called_once_with([str(photo)])
+        self.assertIn("photos", report.filled)
 
     def test_menubar_entries_start_at_index_zero(self):
         """Ein Tearoff-Eintrag wuerde alle Menue-Indizes verschieben.
