@@ -1446,3 +1446,40 @@ class OnlineProviderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UrlAndMarkupTests(unittest.TestCase):
+    """Von CodeQL gemeldete Muster: Teilzeichenketten statt Hostnamen."""
+
+    def test_a_domain_in_the_query_string_is_not_a_host_match(self):
+        matches = ProductGeneratorGUI.host_has_label
+        self.assertTrue(matches("https://www.amazon.de/dp/B01", "amazon"))
+        self.assertTrue(matches("https://amazon.co.uk/dp/B01", "amazon"))
+        # Frueher trafen diese drei faelschlich zu.
+        self.assertFalse(matches("https://fremd.test/?x=amazon.de", "amazon"))
+        self.assertFalse(matches("https://amazon.de.fremd.test/x", "amazon"))
+        self.assertFalse(matches("https://keinamazon.de/x", "amazon"))
+
+    def test_exact_domains_reject_lookalikes(self):
+        exact = ProductGeneratorGUI.host_is
+        self.assertTrue(exact("https://d-nb.info/123", "d-nb.info"))
+        self.assertFalse(exact("https://d-nb.info.fremd.test/", "d-nb.info"))
+        self.assertFalse(exact("https://fremd.test/?u=d-nb.info", "d-nb.info"))
+
+    def test_markup_is_removed_even_when_regexes_would_fail(self):
+        clean = ProductGeneratorGUI.clean_html_text
+        # Ein > im Attributwert beendet das Tag fuer <[^>]+> zu frueh.
+        self.assertEqual(clean('<a title="a>b">Text</a>'), "Text")
+        self.assertEqual(clean("<script>code()</script>Sichtbar"), "Sichtbar")
+        self.assertEqual(clean("<p>Eins</p><p>Zwei</p>"), "Eins Zwei")
+        self.assertEqual(clean("Rest <div foo="), "Rest")
+
+    def test_source_names_follow_the_host(self):
+        name = ProductGeneratorGUI.source_name
+        self.assertEqual(name("https://www.amazon.de/dp/B01"), "Amazon")
+        self.assertEqual(name("https://d-nb.info/123"), "DNB")
+        self.assertEqual(
+            name("https://suggestqueries.google.com/complete"),
+            "Web-Vorschlag",
+        )
+        self.assertEqual(name("https://fremd.test/?x=amazon.de"), "fremd.test")

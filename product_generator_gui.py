@@ -19,6 +19,7 @@ from datetime import datetime
 import difflib
 import copy
 import html as html_lib
+from html.parser import HTMLParser
 import ipaddress
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -71,6 +72,45 @@ PLATFORM_IMAGE_LIMITS = {
 OWN_IMAGE_MAX_EDGE = 2000
 OWN_IMAGE_MAX_BYTES = 12 * 1024 * 1024
 OWN_IMAGE_QUALITY = 88
+
+
+class _TextExtractor(HTMLParser):
+    """Gewinnt den sichtbaren Text aus fremdem Markup.
+
+    Inhalte von ``script`` und ``style`` werden verworfen; Zeichenverweise löst
+    der Parser selbst auf. Gegenüber ``re.sub(r'<[^>]+>', …)`` ist das robust
+    gegen Anführungszeichen in Attributen und unvollständige Tags.
+    """
+
+    SKIPPED = frozenset({'script', 'style', 'template'})
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self._parts = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.SKIPPED:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIPPED and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data):
+        if not self._skip_depth:
+            self._parts.append(data)
+
+    @classmethod
+    def text_of(cls, value):
+        parser = cls()
+        try:
+            parser.feed(str(value or ''))
+            parser.close()
+        except Exception:
+            # Unbrauchbares Markup liefert lieber den Rohtext als nichts.
+            return str(value or '')
+        return ' '.join(parser._parts)
 
 
 def restrict_to_owner(path):
@@ -1894,7 +1934,9 @@ class ProductGeneratorGUI:
         idx = selection[0]
         if 0 <= idx < len(self.search_results):
             self.selected_variant = self.search_results[idx]['variant']
-            if 'amazon.' in self.selected_variant.get('source_url', ''):
+            if self.host_has_label(
+                self.selected_variant.get('source_url', ''), 'amazon'
+            ):
                 self.selected_variant['name'] = (
                     self.complete_known_title_fragment(
                         self.selected_variant.get('name', '')
@@ -1929,23 +1971,23 @@ class ProductGeneratorGUI:
             source_url = self.selected_variant.get('source_url', '')
             if (
                 source_url
-                and 'suggestqueries.google.com/' not in source_url
+                and not self.host_is(source_url, 'suggestqueries.google.com')
             ):
                 self.load_product_image_async(
                     self.selected_variant, source_url
                 )
             if (
-                'amazon.de/' in source_url
+                self.host_is(source_url, 'amazon.de')
                 and str(description).startswith('Amazon-Suchergebnis:')
             ):
                 self.load_amazon_details_async(self.selected_variant)
             elif (
-                ('geizhals.de/' in source_url or 'idealo.de/' in source_url)
+                self.host_is(source_url, 'geizhals.de', 'idealo.de')
                 and str(description).startswith('Online gefunden:')
             ):
                 self.load_comparison_details_async(self.selected_variant)
             elif (
-                'suggestqueries.google.com/' in source_url
+                self.host_is(source_url, 'suggestqueries.google.com')
                 and str(description).startswith('Web-Suchvorschlag')
             ):
                 self.load_suggestion_details_async(self.selected_variant)
@@ -2780,7 +2822,9 @@ class ProductGeneratorGUI:
                     variant, variant.get('source_url', '')
                 )
             product_facts = details.get('ebay_product_facts') or []
-            if product_facts and 'ebay.' in variant.get('source_url', ''):
+            if product_facts and self.host_has_label(
+                variant.get('source_url', ''), 'ebay'
+            ):
                 description = '\n'.join(product_facts)
                 variant['description'] = {
                     'de': description, 'en': description
@@ -3303,7 +3347,7 @@ class ProductGeneratorGUI:
     def extract_product_image_url(html, page_url):
         def normalized_url(value):
             value = html_lib.unescape(value).replace('\\_', '_')
-            if 'm.media-amazon.com/' in value:
+            if ProductGeneratorGUI.host_is(value, 'm.media-amazon.com'):
                 value = re.sub(
                     r'\.\*([A-Z]{2}\d+)\*\.', r'._\1_.', value
                 )
@@ -3375,7 +3419,7 @@ class ProductGeneratorGUI:
         """Extrahiert Hauptbild und Amazon-Galeriebilder in hoher Auflösung."""
         primary = cls.extract_product_image_url(html, page_url)
         urls = [primary] if primary else []
-        if 'amazon.' not in urllib.parse.urlparse(page_url).netloc.casefold():
+        if not cls.host_has_label(page_url, 'amazon'):
             return urls
 
         decoded = html_lib.unescape(html).replace('\\/', '/')
@@ -3788,7 +3832,9 @@ class ProductGeneratorGUI:
         unique_results = []
         if descriptions:
             descriptions.sort(
-                key=lambda item: 'suggestqueries.google.com' in item[2]
+                key=lambda item: self.host_is(
+                    item[2], 'suggestqueries.google.com'
+                )
             )
             seen = set()
             for title, desc, source_url in descriptions:
@@ -3803,9 +3849,10 @@ class ProductGeneratorGUI:
             unique_results.sort(
                 key=lambda item: (
                     (
-                        'd-nb.info/' in item[2]
+                        self.host_is(item[2], 'd-nb.info')
                         or '/ean/' in item[2]
-                        or 'zvab.com/products/isbn/' in item[2]
+                        or (self.host_is(item[2], 'zvab.com')
+                            and '/products/isbn/' in item[2])
                     ),
                     normalized_query in item[0].lower(),
                     sum(word in item[0].lower() for word in query_words),
@@ -3842,12 +3889,11 @@ class ProductGeneratorGUI:
             return None
         if parsed.scheme not in ('http', 'https') or not parsed.netloc:
             return None
-        host = parsed.netloc.casefold()
-        if 'amazon.' in host:
+        if self.host_has_label(value, 'amazon'):
             return ('Amazon-Link', self.search_amazon_url_with_fallback)
-        if 'geizhals.' in host:
+        if self.host_has_label(value, 'geizhals'):
             return ('Geizhals-Link', self.search_comparison_url_with_fallback)
-        if 'idealo.' in host:
+        if self.host_has_label(value, 'idealo'):
             return ('Idealo-Link', self.search_comparison_url_with_fallback)
         return ('Produktlink', self.search_direct_product_url)
 
@@ -3924,7 +3970,7 @@ class ProductGeneratorGUI:
 
     def search_comparison_url_with_fallback(self, url):
         """Nutzt bei blockierten Preisportalen alternative Produktquellen."""
-        is_idealo = 'idealo.' in urllib.parse.urlparse(url).netloc.casefold()
+        is_idealo = self.host_has_label(url, 'idealo')
         primary = self.search_idealo if is_idealo else self.search_geizhals
         try:
             results = primary(url)
@@ -4003,7 +4049,7 @@ class ProductGeneratorGUI:
         normalized_results = [
             (
                 self.complete_known_title_fragment(title)
-                if 'amazon.' in source_url else title,
+                if self.host_has_label(source_url, 'amazon') else title,
                 desc,
                 source_url,
             )
@@ -4094,7 +4140,10 @@ class ProductGeneratorGUI:
     def load_comparison_details_async(self, variant):
         """Lädt Geizhals-/Idealo-Details erst nach Auswahl eines Treffers."""
         source_url = variant.get('source_url', '')
-        provider = 'geizhals' if 'geizhals.' in source_url else 'idealo'
+        provider = (
+            'geizhals' if self.host_has_label(source_url, 'geizhals')
+            else 'idealo'
+        )
 
         def worker():
             try:
@@ -4149,9 +4198,9 @@ class ProductGeneratorGUI:
                 ).strip()
                 exact_bonus = 100 if normalized_title == normalized_requested else 0
                 source_bonus = (
-                    30 if 'geizhals.' in source_url
-                    else 25 if 'idealo.' in source_url
-                    else 20 if 'amazon.' in source_url
+                    30 if self.host_has_label(source_url, 'geizhals')
+                    else 25 if self.host_has_label(source_url, 'idealo')
+                    else 20 if self.host_has_label(source_url, 'amazon')
                     else 10
                 )
                 similarity = difflib.SequenceMatcher(
@@ -4246,31 +4295,29 @@ class ProductGeneratorGUI:
         )
         self.select_result_index(selected_index)
 
-    @staticmethod
-    def source_name(source_url):
-        host = urllib.parse.urlparse(source_url or '').netloc.lower()
-        if 'amazon.' in host:
-            return 'Amazon'
-        if 'geizhals.' in host:
-            return 'Geizhals'
-        if 'idealo.' in host:
-            return 'Idealo'
-        if 'ebay.' in host:
-            return 'eBay'
-        if 'kleinanzeigen.' in host:
-            return 'Kleinanzeigen'
-        if 'wikipedia.' in host:
-            return 'Wikipedia'
-        if 'd-nb.info' in host:
-            return 'DNB'
-        if 'zvab.' in host or 'abebooks.' in host:
-            return 'ZVAB'
-        if 'openlibrary.' in host:
-            return 'Open Library'
-        if 'googleapis.' in host or 'books.google.' in host:
-            return 'Google Books'
-        if 'suggestqueries.google.' in host:
+    @classmethod
+    def source_name(cls, source_url):
+        """Benennt die Herkunft anhand des Hostnamens."""
+        host = cls.url_host(source_url)
+        if cls.host_is(source_url, 'suggestqueries.google.com'):
             return 'Web-Vorschlag'
+        if cls.host_is(source_url, 'd-nb.info'):
+            return 'DNB'
+        if cls.host_is(source_url, 'googleapis.com', 'books.google.com'):
+            return 'Google Books'
+        for label, name in (
+            ('amazon', 'Amazon'),
+            ('geizhals', 'Geizhals'),
+            ('idealo', 'Idealo'),
+            ('ebay', 'eBay'),
+            ('kleinanzeigen', 'Kleinanzeigen'),
+            ('wikipedia', 'Wikipedia'),
+            ('zvab', 'ZVAB'),
+            ('abebooks', 'ZVAB'),
+            ('openlibrary', 'Open Library'),
+        ):
+            if cls.host_has_label(source_url, label):
+                return name
         return host.removeprefix('www.') or 'Lokal'
 
     @staticmethod
@@ -5514,14 +5561,10 @@ class ProductGeneratorGUI:
 
     @staticmethod
     def clean_html_text(value):
-        value = re.sub(
-            r'<(?:script|style)\b[^>]*>.*?</(?:script|style)>',
-            ' ',
-            value,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        value = re.sub(r'<[^>]+>', ' ', value)
-        value = html_lib.unescape(value)
+        # Ein echter Parser statt regulaerer Ausdruecke: Markup wie
+        # <a title="a>b"> oder ein unvollstaendiges Tag laesst sich mit
+        # <[^>]+> nicht zuverlaessig entfernen.
+        value = _TextExtractor.text_of(value)
         value = re.sub(
             r'\(function\([^)]*\)\s*\{.*?\}\)\);?',
             ' ',
@@ -5624,6 +5667,46 @@ class ProductGeneratorGUI:
             if len(data) > MAX_TEXT_RESPONSE_BYTES:
                 raise ValueError("Webantwort ist zu groß")
             return data.decode(encoding, errors='replace')
+
+    @staticmethod
+    def url_host(value):
+        """Liefert den Hostnamen einer Adresse in Kleinschreibung."""
+        try:
+            host = urllib.parse.urlparse(str(value or '')).hostname or ''
+        except ValueError:
+            return ''
+        return host.casefold().rstrip('.')
+
+    @classmethod
+    def host_is(cls, value, *domains):
+        """Prüft den Hostnamen einer Adresse, nicht die Zeichenkette.
+
+        ``'amazon.' in url`` trifft auch auf ``https://fremd.test/?x=amazon.de``
+        zu. Verglichen wird deshalb der geparste Host mit der Domain selbst
+        oder einer ihrer Unterdomains.
+        """
+        host = cls.url_host(value)
+        return any(
+            host == domain or host.endswith(f".{domain}")
+            for domain in domains
+        )
+
+    @classmethod
+    def host_has_label(cls, value, label):
+        """Prüft die registrierbare Domain, nicht irgendeinen Namensteil.
+
+        Nötig für Anbieter mit vielen Länderdomains: amazon.de und
+        amazon.co.uk sollen zählen, ``amazon.de.fremd.test`` dagegen nicht –
+        dort ist ``amazon`` nur eine Unterdomain fremder Herkunft.
+        """
+        parts = cls.url_host(value).split('.')
+        wanted = label.casefold()
+        if len(parts) >= 2 and parts[-2] == wanted:
+            return True
+        # Zweistufige Endungen wie co.uk oder com.au.
+        return (
+            len(parts) >= 3 and parts[-3] == wanted and len(parts[-2]) <= 3
+        )
 
     @staticmethod
     def validate_remote_url(url):
