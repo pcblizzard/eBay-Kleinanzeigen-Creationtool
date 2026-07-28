@@ -5837,7 +5837,9 @@ class ProductGeneratorGUI:
         if not client_id or not client_secret or not self.ebay_ru_name:
             raise EbayError(TRANSLATIONS[self.language]['ebay_no_credentials'])
         client = EbayListingClient(
-            client_id, client_secret, environment=self.ebay_environment
+            client_id=client_id,
+            client_secret=client_secret,
+            environment=self.ebay_environment,
         )
         refresh_token = self.get_secret('ebay_refresh_token')
         if refresh_token:
