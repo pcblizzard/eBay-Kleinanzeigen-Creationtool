@@ -922,7 +922,12 @@ class OnlineProviderTests(unittest.TestCase):
             [result[0] for result in results],
             ["fantec", "fantec qb-35us3-6g", "fantec gehäuse"],
         )
-        self.assertTrue(all("suggestqueries.google.com" in item[2] for item in results))
+        # Hostname vergleichen statt Teilzeichenkette: sonst wuerde der Test
+        # genau das Muster vorleben, das im Quelltext beseitigt wurde.
+        self.assertTrue(all(
+            ProductGeneratorGUI.host_is(item[2], "suggestqueries.google.com")
+            for item in results
+        ))
 
     def test_stale_online_search_is_rejected(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
