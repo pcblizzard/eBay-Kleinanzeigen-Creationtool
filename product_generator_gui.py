@@ -67,6 +67,18 @@ Verkauf von privat unter Ausschluss der Sachmängelhaftung. Die Haftung für Vor
 # damalige Fassung in seiner Konfiguration und bekäme sonst die Verbesserung
 # nie zu sehen. Nur exakte Übereinstimmungen werden gehoben – ein selbst
 # geschriebener Text bleibt unangetastet.
+# Gattungs- und Werbewörter, die in Produktadressen stehen, aber nichts zur
+# Identifizierung beitragen.
+SLUG_FILLER_WORDS = frozenset("""
+android smartphone handy tablet notebook laptop computer pc zoll inch
+kamera kamerasystem rueckkamerasystem dreifach vierfach display
+bildschirm speicher gb tb kopfhoerer lautsprecher maus tastatur
+festplatte gehaeuse ssd monitor drucker
+schwarz weiss weiß grau blau rot gruen grün silber gold
+neu original zubehoer zubehör set kit edition version modell
+mit ohne und der die das für fuer von aus im in
+""".split())
+
 SUPERSEDED_CLAUSES = (
     "Privatverkauf. Die Ware wird unter Ausschluss der Sachmängelhaftung "
     "nach § 475 BGB verkauft. Ausgeschlossen ist jede Gewährleistung für "
@@ -370,6 +382,10 @@ TRANSLATIONS = {
         "variants_found": "Variante(n) gefunden",
         "selected_variant": "Variante ausgewählt:",
         "online_results": "Online-Ergebnisse gefunden",
+        "link_fallback": (
+            "Die verlinkte Seite war nicht lesbar ({reason}); "
+            "Ersatzsuche nach „{query}“"
+        ),
         "default_save_path_description": "Standard-Speicherort auswählen:",
         "online_searching": "Suche online...",
         "details_loading": "Produktdetails werden geladen...",
@@ -4085,12 +4101,12 @@ class ProductGeneratorGUI:
         slug = path.rsplit('/', 1)[-1]
         slug = re.sub(r'\.(?:html?|php)$', '', slug, flags=re.IGNORECASE)
         slug = re.sub(r'^\d+[_-]+', '', slug)
-        slug = re.sub(r'-v\d+$', '', slug, flags=re.IGNORECASE)
+        slug = re.sub(r'-[av]\d+$', '', slug, flags=re.IGNORECASE)
         slug = re.sub(r'[_-]+', ' ', slug)
         return re.sub(r'\s+', ' ', slug).strip()
 
-    @staticmethod
-    def model_query_from_slug(url):
+    @classmethod
+    def model_query_from_slug(cls, url):
         """Leitet aus einem Produkt-Slug einen suchtauglichen Modellnamen ab.
 
         Der vollstaendige Slug ist als Suchbegriff zu lang und zu werblich.
@@ -4121,7 +4137,26 @@ class ProductGeneratorGUI:
         for index, word in enumerate(words):
             if re.search(r'\d', word) and re.search(r'[^\W\d_]', word):
                 return '-'.join(words[:index + 1])
-        return ' '.join(words[:4])
+        # Ohne Modellnummer bleibt nur der Anfang des Slugs. Beim ersten
+        # Gattungswort wird abgebrochen, denn danach folgt in Produktadressen
+        # regelmäßig nur noch Werbetext: aus
+        # „Google-Pixel-Android-Smartphone-Dreifach-Rückkamerasystem-Actua“
+        # wird so „Google Pixel“ statt einer verwässerten Wortkette.
+        leading = []
+        for word in words[:4]:
+            if cls.is_filler_word(word):
+                break
+            leading.append(word)
+        return ' '.join(leading or words[:2])
+
+    @staticmethod
+    def is_filler_word(word):
+        normalized = word.casefold()
+        for umlaut, ersatz in (
+            ('ä', 'ae'), ('ö', 'oe'), ('ü', 'ue'), ('ß', 'ss')
+        ):
+            normalized = normalized.replace(umlaut, ersatz)
+        return normalized in SLUG_FILLER_WORDS
 
     def search_amazon_url_with_fallback(self, url):
         """Weicht bei blockierten Amazon-Produktseiten auf andere Quellen aus.
@@ -4129,12 +4164,13 @@ class ProductGeneratorGUI:
         Die ASIN kennt nur Amazon; die Modellnummer im Slug finden die
         Vergleichsportale dagegen zuverlaessig.
         """
+        reason = ''
         try:
             results = self.search_amazon(url)
             if results:
                 return results
-        except Exception:
-            pass
+        except Exception as error:
+            reason = str(error)
         query = self.model_query_from_slug(url)
         if not query:
             return []
@@ -4146,7 +4182,14 @@ class ProductGeneratorGUI:
                 alternatives.extend(provider(query))
             except Exception:
                 continue
-        return self.merge_provider_results([alternatives])
+        merged = self.merge_provider_results([alternatives])
+        if merged:
+            # Der Nutzer soll wissen, dass er Ersatztreffer sieht - und wonach
+            # gesucht wurde, denn der Suchbegriff stammt aus der Adresse.
+            self._link_fallback_note = TRANSLATIONS[self.language][
+                'link_fallback'
+            ].format(query=query, reason=reason or '—')
+        return merged
 
     def search_comparison_url_with_fallback(self, url):
         """Nutzt bei blockierten Preisportalen alternative Produktquellen."""
@@ -4465,7 +4508,12 @@ class ProductGeneratorGUI:
             self.variant_listbox.insert(
                 tk.END, self.result_display_label(result)
             )
-        self.status_var.set(f"{len(self.search_results)} {trans['online_results']}")
+        note = getattr(self, '_link_fallback_note', '')
+        self._link_fallback_note = ''
+        self.status_var.set(
+            f"{len(self.search_results)} {trans['online_results']}"
+            + (f" — {note}" if note else '')
+        )
         selected_index = next(
             (
                 index for index, result in enumerate(self.search_results)
@@ -5073,8 +5121,11 @@ class ProductGeneratorGUI:
         )
 
     def _search_geizhals_once(self, search_term):
+        # Geizhals nutzt beide Formen: die aeltere -v<Nummer> und die heute
+        # ueblichere -a<Nummer>. Wurde nur die erste erkannt, landete eine
+        # Produktadresse als Suchbegriff im Suchfeld, statt gelesen zu werden.
         direct_match = re.search(
-            r'https?://(?:www\.)?geizhals\.de/[^\s]+-v\d+\.html',
+            r'https?://(?:www\.)?geizhals\.(?:de|at|eu)/[^\s]+-[av]\d+\.html',
             search_term,
             re.IGNORECASE,
         )
@@ -5928,7 +5979,7 @@ class ProductGeneratorGUI:
         links = []
 
         patterns = [
-            r'<a[^>]*href=["\']([^"\']*-v\d+\.html[^"\']*)["\'][^>]*>(.*?)</a>',
+            r'<a[^>]*href=["\']([^"\']*-[av]\d+\.html[^"\']*)["\'][^>]*>(.*?)</a>',
             r'<a[^>]*href=["\']([^"\']*OffersOfProduct/\d+_[^"\']+\.html[^"\']*)["\'][^>]*>(.*?)</a>',
             r'<a[^>]*href=["\']([^"\']+)["\'][^>]*class=["\']?[^"\'>]*(?:productlink|productLink|ga_title|product_name|productName|productListItemLink|offerListItem__title|productName)[^"\'>]*["\']?[^>]*>(.*?)</a>',
             r'<a[^>]*href=["\']([^"\']+)["\'][^>]*title=["\']([^"\']+)["\'][^>]*>',
@@ -5956,7 +6007,7 @@ class ProductGeneratorGUI:
                     continue
                 full_url = urllib.parse.urljoin(base_url, href)
                 canonical_match = re.search(
-                    r'(https?://[^"\']+(?:-v\d+|OffersOfProduct/\d+_[^/?#]+)\.html)',
+                    r'(https?://[^"\']+(?:-[av]\d+|OffersOfProduct/\d+_[^/?#]+)\.html)',
                     full_url,
                     re.IGNORECASE,
                 )

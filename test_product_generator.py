@@ -1182,6 +1182,7 @@ class OnlineProviderTests(unittest.TestCase):
 
     def test_blocked_amazon_link_falls_back_to_other_sources(self):
         gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        gui.language = "de"
         url = (
             "https://www.amazon.de/QB-X2US3R-Festplatten-"
             "temperaturgeregelt/dp/B01GSWFOA4"
@@ -1696,3 +1697,64 @@ class LegalClauseMigrationTests(unittest.TestCase):
         self.assertIn("Vorsatz", WARRANTY_CLAUSE)
         self.assertIn("grobe Fahrlässigkeit", WARRANTY_CLAUSE)
         self.assertIn("Leben, Körper oder Gesundheit", WARRANTY_CLAUSE)
+
+
+class ProductLinkTests(unittest.TestCase):
+    """Ein Produktlink soll die verlinkte Seite lesen, nicht danach suchen."""
+
+    def test_both_geizhals_url_forms_count_as_product_pages(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        seiten = {
+            "https://geizhals.de/fantec-qb-x2us3r-schwarz-1826-a1471139.html":
+                "neue Form mit -a",
+            "https://geizhals.de/google-pixel-10-pro-xl-v209142.html":
+                "alte Form mit -v",
+        }
+        for url, form in seiten.items():
+            with patch.object(
+                gui, 'fetch_url', return_value="<html></html>"
+            ) as holen, patch.object(
+                gui, 'extract_comparison_product',
+                return_value=("Titel", "Daten"),
+            ):
+                ergebnis = ProductGeneratorGUI._search_geizhals_once(gui, url)
+            # Die Seite selbst wurde geholt, nicht eine Trefferliste.
+            holen.assert_called_once_with(url)
+            self.assertEqual(ergebnis, [("Titel", "Daten", url)], form)
+
+    def test_a_slug_without_a_model_number_stops_at_generic_words(self):
+        model = ProductGeneratorGUI.model_query_from_slug
+        self.assertEqual(
+            model(
+                "https://amazon.de/Google-Pixel-Android-Smartphone-Dreifach-"
+                "R%C3%BCckkamerasystem-Actua-Display/dp/B0D7TZ5YDV"
+            ),
+            "Google Pixel",
+        )
+        self.assertEqual(
+            model("https://www.amazon.de/Bose-QuietComfort-Kopfhoerer/dp/Y"),
+            "Bose QuietComfort",
+        )
+        # Eine Modellnummer schlaegt die Wortliste weiterhin.
+        self.assertEqual(
+            model("https://www.amazon.de/Samsung-Galaxy-S23-Smartphone/dp/X"),
+            "Samsung-Galaxy-S23",
+        )
+
+    def test_a_substituted_search_is_disclosed(self):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        gui.language = "de"
+        treffer = ("Google Pixel 10", "Daten", "https://geizhals.de/x-v1.html")
+        with patch.object(
+            gui, 'search_amazon', side_effect=RuntimeError("blockiert")
+        ), patch.object(
+            gui, 'search_geizhals', return_value=[treffer]
+        ), patch.object(gui, 'search_idealo', return_value=[]), \
+                patch.object(gui, 'search_wikipedia', return_value=[]):
+            ProductGeneratorGUI.search_amazon_url_with_fallback(
+                gui, "https://amazon.de/Google-Pixel-Android/dp/B0D7TZ5YDV"
+            )
+        hinweis = gui._link_fallback_note
+        # Grund und Ersatzbegriff muessen benannt sein.
+        self.assertIn("blockiert", hinweis)
+        self.assertIn("Google Pixel", hinweis)
