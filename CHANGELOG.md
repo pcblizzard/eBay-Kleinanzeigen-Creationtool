@@ -18,6 +18,32 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 - Der Wunschpreis kennt die bei Kleinanzeigen übliche Preisart: VB,
   Festpreis oder „Zu verschenken“.
 
+### Geprüft und verworfen: Zalando, Limango, BestSecret und Ankaufsdienste
+
+Als zusätzliche Quellen für Produktinformationen geprüft und nicht aufgenommen:
+
+- **Zalando** – die „RESTful API Guidelines“ sind ein Styleguide für den
+  Entwurf von Schnittstellen, keine Schnittstelle. Die Merchant-API richtet
+  sich an Händler, die auf Zalando verkaufen, deckt Bestellungen und
+  Sendungen ab und setzt einen Händlervertrag voraus.
+- **Limango, BestSecret, Zalando Lounge** – keine öffentlichen
+  Schnittstellen; Limangos Swagger verlangt API-Key, Access-Token und
+  Device-ID der eigenen App.
+- **momox, medimops, rebuy** – bieten nur undokumentierte interne Endpunkte.
+  Der oft verlinkte Entwicklerbereich von „Rebuy“ gehört zu einer
+  gleichnamigen Shopify-App, nicht zu rebuy.de.
+
+Diese Anbieter führen zudem keine technischen Produktdaten, wie sie das
+Werkzeug aus Geizhals, Amazon, Wikipedia, der DNB und der eBay-API bezieht.
+
+### Hinzugefügt: Ankaufspreise nachschlagen
+
+Für Bücher und Medien öffnet **Ankaufspreis prüfen** momox, medimops oder
+rebuy im Browser und legt ISBN beziehungsweise EAN in die Zwischenablage.
+Ankaufspreise sind eine sinnvolle Untergrenze für die eigene Preisfindung.
+Abgerufen oder ausgewertet wird nichts – die Dienste weisen automatisierte
+Zugriffe ohnehin ab.
+
 ### Geprüft und verworfen: weitere Verkaufsplattformen
 
 Vinted, Shpock und Mädchenflohmarkt wurden als zusätzliche Plattformprofile

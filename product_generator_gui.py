@@ -74,6 +74,21 @@ PLATFORM_IMAGE_LIMITS = {
     'ebay_detailed': 24,
     'ebay_mobile': 24,
 }
+# Ankaufsdienste nennen, was sie fuer ein Buch oder Medium zahlen wuerden -
+# eine Untergrenze fuer die eigene Preisfindung. Es gibt dafuer keine
+# offiziellen Schnittstellen, deshalb wird nur die Seite geoeffnet und die
+# Kennung bereitgelegt; abgerufen wird nichts.
+#
+# Bewusst die Einstiegsseiten statt geratener Suchadressen: momox und medimops
+# beantworten automatisierte Abrufe mit HTTP 403, ihre Parameter liessen sich
+# nicht pruefen. Ein direkter Suchlink kann ergaenzt werden, sobald das Muster
+# belegt ist.
+BUYBACK_SERVICES = (
+    ('momox', 'https://www.momox.de/'),
+    ('medimops', 'https://www.medimops.de/'),
+    ('rebuy', 'https://www.rebuy.de/verkaufen'),
+)
+
 OWN_IMAGE_MAX_EDGE = 2000
 OWN_IMAGE_MAX_BYTES = 12 * 1024 * 1024
 OWN_IMAGE_QUALITY = 88
@@ -416,6 +431,8 @@ TRANSLATIONS = {
         "price_sold": "Tatsächlich verkaufte Angebote",
         "apply_assistant": "Angaben in Entwürfe übernehmen",
         "fact_conflicts": "Widersprüche prüfen",
+        "buyback_check": "💶 Ankaufspreis prüfen",
+        "buyback_copied": "Kennung in die Zwischenablage gelegt:",
         "no_fact_conflicts": "Keine unbestätigten Datenkonflikte vorhanden.",
         "confirm_fact": "Ausgewählten Wert bestätigen",
         "completeness_ready": "Entwurf vollständig prüfbar",
@@ -1486,6 +1503,13 @@ class ProductGeneratorGUI:
             command=self.open_fact_conflicts,
         )
         self.fact_conflicts_button.pack(side=tk.LEFT, padx=(6, 0))
+        self.buyback_button = ttk.Button(
+            assistant_actions,
+            text=trans['buyback_check'],
+            command=self.show_buyback_menu,
+            state=tk.DISABLED,
+        )
+        self.buyback_button.pack(side=tk.LEFT, padx=(6, 0))
         self.completeness_var = tk.StringVar()
         ttk.Label(
             assistant_actions, textvariable=self.completeness_var,
@@ -2612,6 +2636,7 @@ class ProductGeneratorGUI:
             missing.append(trans['fact_conflicts'])
         errors = self.platform_limit_errors()
         missing.extend(errors)
+        self.update_buyback_state()
         self.completeness_var.set(
             f"{trans['completeness_missing']} {', '.join(missing)}"
             if missing else trans['completeness_ready']
@@ -2657,6 +2682,64 @@ class ProductGeneratorGUI:
             else 'active'
         )
         self.update_price_summary()
+
+    def product_identifier(self):
+        """Liefert ISBN oder EAN des Beitrags, sofern vorhanden."""
+        variant = self.selected_variant or {}
+        for key in ('isbn', 'ean', 'gtin'):
+            value = variant.get(key)
+            if isinstance(value, (list, tuple)):
+                value = value[0] if value else ''
+            if value:
+                return re.sub(r'[^0-9Xx]', '', str(value)).upper()
+        # Sonst die Eingabe selbst, falls dort eine Nummer steht.
+        typed = re.sub(r'[^0-9Xx]', '', self.search_var.get()).upper()
+        if self.normalize_isbn(self.search_var.get()) or len(typed) == 13:
+            return typed
+        return ''
+
+    def update_buyback_state(self):
+        """Der Knopf ist nur bei vorhandener ISBN oder EAN nutzbar."""
+        if not hasattr(self, 'buyback_button'):
+            return
+        self.buyback_button.config(
+            state=tk.NORMAL if self.product_identifier() else tk.DISABLED
+        )
+
+    def show_buyback_menu(self):
+        identifier = self.product_identifier()
+        if not identifier:
+            return
+        menu = tk.Menu(self.root, tearoff=0)
+        for name, url in BUYBACK_SERVICES:
+            menu.add_command(
+                label=name,
+                command=lambda target=url: self.open_buyback_service(target),
+            )
+        try:
+            menu.tk_popup(
+                self.buyback_button.winfo_rootx(),
+                self.buyback_button.winfo_rooty()
+                + self.buyback_button.winfo_height(),
+            )
+        finally:
+            menu.grab_release()
+
+    def open_buyback_service(self, url):
+        """Öffnet den Dienst und legt die Kennung in die Zwischenablage.
+
+        Bewusst kein Abruf: die Dienste bieten keine offene Schnittstelle, und
+        ihre Seiten weisen automatisierte Zugriffe ab. Der Preis wird also
+        gelesen, nicht ausgewertet.
+        """
+        identifier = self.product_identifier()
+        if not identifier:
+            return
+        trans = TRANSLATIONS[self.language]
+        self.root.clipboard_clear()
+        self.root.clipboard_append(identifier)
+        webbrowser.open(url)
+        self.status_var.set(f"{trans['buyback_copied']} {identifier}")
 
     def open_fact_conflicts(self):
         trans = TRANSLATIONS[self.language]
@@ -3637,6 +3720,7 @@ class ProductGeneratorGUI:
         self.listing_title_label.config(text=trans['listing_title_label'])
         self.apply_assistant_button.config(text=trans['apply_assistant'])
         self.fact_conflicts_button.config(text=trans['fact_conflicts'])
+        self.buyback_button.config(text=trans['buyback_check'])
         self.condition_combo.configure(
             values=trans['condition_values'].split('|')
         )

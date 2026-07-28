@@ -13,6 +13,7 @@ from PIL import Image
 from PIL.TiffImagePlugin import IFDRational
 
 from product_generator_gui import (
+    BUYBACK_SERVICES,
     TabbedProductGeneratorGUI,
     OWN_IMAGE_MAX_EDGE,
     ProductGenerator,
@@ -1525,3 +1526,46 @@ class RetiredPlatformTests(unittest.TestCase):
                     self.assertIn(key, PLATFORM_PROFILES)
             finally:
                 store.close()
+
+
+class BuybackTests(unittest.TestCase):
+    """Ankaufspreise werden verlinkt, nicht abgerufen."""
+
+    @staticmethod
+    def controller(variant, typed=""):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        gui.selected_variant = variant
+        gui.search_var = SimpleNamespace(get=lambda: typed)
+        return gui
+
+    def test_the_identifier_comes_from_isbn_ean_or_input(self):
+        self.assertEqual(
+            self.controller({"isbn": "978-3-442-31810-6"}).product_identifier(),
+            "9783442318106",
+        )
+        self.assertEqual(
+            self.controller({"ean": "4250199300182"}).product_identifier(),
+            "4250199300182",
+        )
+        # Ohne Kennung am Produkt zaehlt die Eingabe, sofern sie eine ist.
+        self.assertEqual(
+            self.controller({}, "9783442318106").product_identifier(),
+            "9783442318106",
+        )
+        self.assertEqual(
+            self.controller({}, "Fantec QB-X2US3R").product_identifier(), ""
+        )
+
+    def test_no_service_is_contacted(self):
+        """Der Quelltext darf die Dienste nur oeffnen, nie abrufen."""
+        source = inspect.getsource(ProductGeneratorGUI.open_buyback_service)
+        self.assertIn("webbrowser.open", source)
+        for forbidden in ("urlopen", "fetch_url", "fetch_binary", "Request("):
+            self.assertNotIn(forbidden, source)
+
+    def test_services_are_reachable_entry_pages(self):
+        for name, url in BUYBACK_SERVICES:
+            self.assertTrue(name)
+            self.assertTrue(url.startswith("https://"), url)
+            # Keine geratenen Suchparameter, die stillschweigend brechen.
+            self.assertNotIn("?", url)
