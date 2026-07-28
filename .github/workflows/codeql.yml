@@ -18,6 +18,13 @@ jobs:
   analyze:
     name: Analyse
     runs-on: ubuntu-latest
+    # Code-Scanning setzt auf privaten Repositories GitHub Advanced Security
+    # voraus. Ohne das kann die Analyse ihre Ergebnisse nicht abliefern und
+    # der Job faellt, obwohl am Quelltext nichts falsch ist. Statt dauerhaft
+    # rot zu stehen - und damit echte Fehler unsichtbar zu machen - wird er
+    # uebersprungen und laeuft von selbst wieder an, sobald das Repository
+    # oeffentlich ist.
+    if: github.event.repository.private == false
     permissions:
       security-events: write
       contents: read
