@@ -13,6 +13,7 @@ from PIL import Image
 from PIL.TiffImagePlugin import IFDRational
 
 from product_generator_gui import (
+    SUPERSEDED_CLAUSES,
     BUYBACK_SERVICES,
     TabbedProductGeneratorGUI,
     OWN_IMAGE_MAX_EDGE,
@@ -1658,3 +1659,33 @@ class BuybackUrlTests(unittest.TestCase):
         for name, url in adressen.items():
             self.assertNotIn(" ", url, name)
             self.assertIn("Google+Pixel+9+Pro", url, name)
+
+
+class LegalClauseMigrationTests(unittest.TestCase):
+    """Eine unveränderte alte Vorgabe wird gehoben, eigener Text nicht."""
+
+    def test_an_untouched_previous_default_is_updated(self):
+        for veraltet in SUPERSEDED_CLAUSES:
+            self.assertEqual(
+                ProductGeneratorGUI.current_legal_clause(veraltet),
+                WARRANTY_CLAUSE,
+            )
+
+    def test_a_self_written_clause_is_kept(self):
+        eigen = "Verkauf wie besichtigt, Abholung nach Absprache."
+        self.assertEqual(
+            ProductGeneratorGUI.current_legal_clause(eigen), eigen
+        )
+
+    def test_an_empty_or_missing_clause_falls_back(self):
+        for leer in ("", "   ", None):
+            self.assertEqual(
+                ProductGeneratorGUI.current_legal_clause(leer),
+                WARRANTY_CLAUSE,
+            )
+
+    def test_the_default_carries_the_mandatory_carve_outs(self):
+        """Ausschluesse, die das Gesetz ohnehin nicht zulaesst, benennen."""
+        self.assertIn("Vorsatz", WARRANTY_CLAUSE)
+        self.assertIn("grobe Fahrlässigkeit", WARRANTY_CLAUSE)
+        self.assertIn("Leben, Körper oder Gesundheit", WARRANTY_CLAUSE)

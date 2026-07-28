@@ -60,7 +60,20 @@ except ImportError:
     ImageTk = None
 
 # Konstante für die Gewährleistungsklausel
-WARRANTY_CLAUSE = """Privatverkauf. Die Ware wird unter Ausschluss der Sachmängelhaftung nach § 475 BGB verkauft. Ausgeschlossen ist jede Gewährleistung für Sachmängel. Die Haftung für arglistig verschwiegene Mängel sowie für Schäden aus der Verletzung von Leben, Körper oder Gesundheit bleibt unberührt."""
+WARRANTY_CLAUSE = """Privatverkauf, keine Gewährleistung, keine Rücknahme.
+Verkauf von privat unter Ausschluss der Sachmängelhaftung. Die Haftung für Vorsatz, grobe Fahrlässigkeit sowie für Schäden aus Verletzung von Leben, Körper oder Gesundheit bleibt unberührt. Keine Rücknahme, keine Garantie."""
+
+# Frühere Vorgaben des Pflichttextes. Wer ihn nie geändert hat, trägt die
+# damalige Fassung in seiner Konfiguration und bekäme sonst die Verbesserung
+# nie zu sehen. Nur exakte Übereinstimmungen werden gehoben – ein selbst
+# geschriebener Text bleibt unangetastet.
+SUPERSEDED_CLAUSES = (
+    "Privatverkauf. Die Ware wird unter Ausschluss der Sachmängelhaftung "
+    "nach § 475 BGB verkauft. Ausgeschlossen ist jede Gewährleistung für "
+    "Sachmängel. Die Haftung für arglistig verschwiegene Mängel sowie für "
+    "Schäden aus der Verletzung von Leben, Körper oder Gesundheit bleibt "
+    "unberührt.",
+)
 
 MODULE_DIR = Path(__file__).resolve().parent
 APPLICATION_NAME = "eBay-Kleinanzeigen-Creationtool"
@@ -1116,9 +1129,9 @@ class ProductGeneratorGUI:
         self.clear_session_on_exit = bool(
             config.get('clear_session_on_exit', False)
         )
-        self.legal_clause = str(
-            config.get('legal_clause', WARRANTY_CLAUSE)
-        ).strip() or WARRANTY_CLAUSE
+        self.legal_clause = self.current_legal_clause(
+            config.get('legal_clause')
+        )
         project_output = str(default_output_dir())
         self.save_path = config.get('save_path', project_output)
         if not os.path.exists(self.save_path):
@@ -1149,6 +1162,21 @@ class ProductGeneratorGUI:
         if not embedded:
             self.create_menu()
         self.setup_ui()
+
+    @staticmethod
+    @staticmethod
+    def current_legal_clause(saved):
+        """Hebt eine unveränderte frühere Vorgabe auf die aktuelle Fassung.
+
+        Der Pflichttext wird mitgespeichert, sobald irgendeine Einstellung
+        gesichert wird. Ohne diesen Abgleich bliebe jede bestehende
+        Installation dauerhaft auf der alten Fassung stehen – auch wer den
+        Text nie angefasst hat.
+        """
+        clause = str(saved or '').strip()
+        if not clause or clause in SUPERSEDED_CLAUSES:
+            return WARRANTY_CLAUSE
+        return clause
 
     @staticmethod
     def detect_system_language():

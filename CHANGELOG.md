@@ -36,6 +36,24 @@ Als zusätzliche Quellen für Produktinformationen geprüft und nicht aufgenomme
 Diese Anbieter führen zudem keine technischen Produktdaten, wie sie das
 Werkzeug aus Geizhals, Amazon, Wikipedia, der DNB und der eBay-API bezieht.
 
+### Geändert: neuer Wortlaut des Pflichttextes
+
+Der vorgegebene Privatverkaufs-Hinweis lautet nun:
+
+> Privatverkauf, keine Gewährleistung, keine Rücknahme.
+> Verkauf von privat unter Ausschluss der Sachmängelhaftung. Die Haftung für
+> Vorsatz, grobe Fahrlässigkeit sowie für Schäden aus Verletzung von Leben,
+> Körper oder Gesundheit bleibt unberührt. Keine Rücknahme, keine Garantie.
+
+Die bisherige Fassung berief sich auf § 475 BGB, der Verbrauchsgüterkäufe
+zwischen Unternehmern und Verbrauchern regelt und auf einen Privatverkauf
+nicht passt. Die Verweisung entfällt.
+
+Eine unveränderte frühere Vorgabe wird beim Start auf die neue Fassung
+gehoben – der Text wird mitgespeichert, sobald irgendeine Einstellung
+gesichert wird, und bliebe sonst dauerhaft stehen. Ein selbst geschriebener
+Text bleibt unangetastet.
+
 ### Hinzugefügt: Ankaufspreise nachschlagen
 
 **Ankaufspreis prüfen** öffnet momox, medimops oder rebuy direkt beim

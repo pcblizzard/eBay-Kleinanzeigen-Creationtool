@@ -329,10 +329,12 @@ Text anhand der mitgespeicherten Quelle geprüft werden.
 > angehängt, solange er nicht in den Einstellungen bewusst bearbeitet wird.
 > Vor der Übernahme eines geänderten Wortlauts zeigt die Anwendung eine
 > Warnung. Weder Standardtext noch Warnung sind eine Rechtsberatung.
-> Insbesondere behandelt § 475 BGB
-> Verbrauchsgüterkäufe zwischen Unternehmern und Verbrauchern; für
-> Haftungsausschlüsse ist auch § 444 BGB relevant. Den Wortlaut daher vor einer
-> Veröffentlichung fachlich prüfen lassen.
+>
+> Zu beachten ist insbesondere, dass ein Haftungsausschluss unabhängig von
+> seinem Wortlaut nicht greift, soweit das Gesetz es nicht zulässt – etwa bei
+> arglistig verschwiegenen Mängeln oder einer übernommenen Garantie
+> (§ 444 BGB) sowie bei Vorsatz (§ 276 Abs. 3 BGB). Den Wortlaut daher vor
+> einer Veröffentlichung fachlich prüfen lassen.
 
 ## Geplante Features
 
