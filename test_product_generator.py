@@ -1,5 +1,8 @@
+import inspect
 import json
+import queue
 import tempfile
+import threading
 import tkinter as tk
 import unittest
 import unicodedata
@@ -20,6 +23,7 @@ from product_generator_gui import (
     prepare_own_image,
 )
 from kleinanzeigen_assistant import (
+    BrowserSession,
     FormData,
     KleinanzeigenFormAssistant,
     price_type_from_label,
@@ -266,10 +270,44 @@ class ProductGeneratorTests(unittest.TestCase):
         self.assertFalse(report.complete)
 
     def test_form_assistant_never_submits_the_form(self):
-        """Das Absenden bleibt ausdruecklich beim Nutzer."""
-        source = Path("kleinanzeigen_assistant.py").read_text(encoding="utf-8")
-        for forbidden in ("click()", ".press(", "submit("):
+        """Das Absenden bleibt ausdruecklich beim Nutzer.
+
+        Geprueft wird nur die Klasse, die die Seite bedient - Methodennamen
+        anderer Klassen wie BrowserSession.submit sind unbedenklich.
+        """
+        source = inspect.getsource(KleinanzeigenFormAssistant)
+        for forbidden in (".click(", ".press(", ".dispatch_event(", ".tap("):
             self.assertNotIn(forbidden, source)
+
+    def test_browser_calls_all_happen_in_one_thread(self):
+        """Playwrights Sync-API bindet ihren Event-Loop an einen Thread.
+
+        Wurde sie aus wechselnden Threads bedient, brach die Verbindung zum
+        Browser mit „coroutine was never awaited" und EPIPE ab.
+        """
+        threads = []
+        done = threading.Event()
+        session = BrowserSession.__new__(BrowserSession)
+        session.assistant = SimpleNamespace(
+            close=lambda: threads.append(threading.current_thread().name)
+        )
+        session._jobs = queue.Queue()
+        session._thread = threading.Thread(
+            target=session._worker, daemon=True, name="test-browser"
+        )
+        session._thread.start()
+        for _ in range(3):
+            session.submit(
+                lambda assistant: threading.current_thread().name,
+                on_success=threads.append,
+            )
+        session.submit(lambda assistant: None, on_success=lambda r: done.set())
+        self.assertTrue(done.wait(5))
+        session.shutdown()
+        session._thread.join(5)
+        # Drei Auftraege, ein Schliessen - alles im selben Thread.
+        self.assertEqual(len(threads), 4)
+        self.assertEqual(set(threads), {"test-browser"})
 
     def test_photos_are_attached_through_the_file_input(self):
         assistant = KleinanzeigenFormAssistant.__new__(

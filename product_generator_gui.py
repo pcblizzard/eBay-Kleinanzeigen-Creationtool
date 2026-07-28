@@ -34,9 +34,10 @@ import xml.etree.ElementTree as ET
 
 from listing_store import ListingStore, PLATFORM_PROFILES, safe_filename
 from kleinanzeigen_assistant import (
+    BROWSER_CHOICES,
+    DEFAULT_BROWSER,
+    BrowserSession,
     FormData,
-    KleinanzeigenFormAssistant,
-    PlaywrightMissing,
     price_type_from_label,
 )
 
@@ -184,7 +185,7 @@ TRANSLATIONS = {
         ),
         "browser_assist_open": "Browser öffnen",
         "browser_assist_fill": "Formular ausfüllen",
-        "browser_assist_close": "Browser schließen",
+        "browser_assist_close": "Browser und Fenster schließen",
         "browser_assist_filled": "Übertragen:",
         "browser_assist_skipped": "Nicht gefunden:",
         "browser_assist_none": (
@@ -197,6 +198,12 @@ TRANSLATIONS = {
             "python -m playwright install chromium"
         ),
         "browser_assist_running": "Browser läuft — Formular kann gefüllt werden.",
+        "browser_assist_starting": "Browser wird gestartet…",
+        "browser_choice_label": "Browser:",
+        "browser_choice_msedge": "Microsoft Edge (installiert)",
+        "browser_choice_chrome": "Google Chrome (installiert)",
+        "browser_choice_chromium": "Chromium (von Playwright geladen)",
+        "browser_choice_firefox": "Firefox (von Playwright geladen)",
         "save_image_title": "Produktbild speichern",
         "image_saved": "Produktbild gespeichert:",
         "legal_frame": "Fester Hinweis (wird immer angehängt)",
@@ -382,7 +389,7 @@ TRANSLATIONS = {
         ),
         "browser_assist_open": "Open browser",
         "browser_assist_fill": "Fill in form",
-        "browser_assist_close": "Close browser",
+        "browser_assist_close": "Close browser and window",
         "browser_assist_filled": "Transferred:",
         "browser_assist_skipped": "Not found:",
         "browser_assist_none": (
@@ -394,6 +401,12 @@ TRANSLATIONS = {
             "python -m playwright install chromium"
         ),
         "browser_assist_running": "Browser is running — the form can be filled.",
+        "browser_assist_starting": "Starting the browser…",
+        "browser_choice_label": "Browser:",
+        "browser_choice_msedge": "Microsoft Edge (installed)",
+        "browser_choice_chrome": "Google Chrome (installed)",
+        "browser_choice_chromium": "Chromium (downloaded by Playwright)",
+        "browser_choice_firefox": "Firefox (downloaded by Playwright)",
         "save_image_title": "Save product image",
         "image_saved": "Product image saved:",
         "legal_frame": "Mandatory notice (always appended)",
@@ -948,6 +961,10 @@ class ProductGeneratorGUI:
         self._ebay_access_token_expires = 0
         self._ebay_result_metadata = {}
         self._market_result_metadata = {}
+        self.browser_choice = config.get('browser_choice', DEFAULT_BROWSER)
+        if self.browser_choice not in BROWSER_CHOICES:
+            self.browser_choice = DEFAULT_BROWSER
+        self._browser_session = None
         self.ebay_environment = config.get('ebay_environment', 'production')
         if self.ebay_environment not in ('production', 'sandbox'):
             self.ebay_environment = 'production'
@@ -1054,6 +1071,7 @@ class ProductGeneratorGUI:
                 'save_path': self.save_path,
                 'legal_clause': self.legal_clause,
                 'ebay_environment': self.ebay_environment,
+                'browser_choice': self.browser_choice,
                 'restore_session': self.restore_session_enabled,
                 'clear_session_on_exit': self.clear_session_on_exit,
                 'providers': {
@@ -5821,6 +5839,19 @@ class ProductGeneratorGUI:
             frame, text=trans['browser_assist_intro'],
             wraplength=460, justify=tk.LEFT,
         ).pack(fill=tk.X)
+
+        chooser = ttk.Frame(frame)
+        chooser.pack(fill=tk.X, pady=(10, 0))
+        ttk.Label(chooser, text=trans['browser_choice_label']).pack(side=tk.LEFT)
+        labels = {key: trans[f'browser_choice_{key}'] for key in BROWSER_CHOICES}
+        browser_var = tk.StringVar(
+            value=labels.get(self.browser_choice, labels[DEFAULT_BROWSER])
+        )
+        ttk.Combobox(
+            chooser, textvariable=browser_var, state='readonly',
+            values=list(labels.values()), width=32,
+        ).pack(side=tk.LEFT, padx=(6, 0))
+
         status_var = tk.StringVar()
         ttk.Label(
             frame, textvariable=status_var, wraplength=460,
@@ -5830,55 +5861,52 @@ class ProductGeneratorGUI:
         buttons.pack(fill=tk.X, pady=(12, 0))
 
         def report(message):
+            # Rueckmeldungen kommen aus dem Browser-Thread.
             self.root.after(0, lambda: status_var.set(message))
 
-        def in_browser_thread(action):
-            """Playwright braucht einen eigenen Thread, Tk den seinen."""
-            threading.Thread(target=action, daemon=True).start()
+        def set_buttons(open_state, fill_state):
+            self.root.after(0, lambda: (
+                open_button.config(state=open_state),
+                fill_button.config(state=fill_state),
+            ))
 
         def open_browser():
+            chosen = next(
+                (key for key, label in labels.items()
+                 if label == browser_var.get()),
+                DEFAULT_BROWSER,
+            )
+            self.browser_choice = chosen
+            self.save_config()
             open_button.config(state=tk.DISABLED)
+            report(trans['browser_assist_starting'])
+            session = BrowserSession(
+                user_data_dir() / 'browser-profil', browser=chosen
+            )
+            self._browser_session = session
 
-            def run():
-                try:
-                    self._browser_assistant = KleinanzeigenFormAssistant(
-                        user_data_dir() / 'browser-profil'
-                    )
-                    self._browser_assistant.start()
-                    report(trans['browser_assist_running'])
-                    self.root.after(
-                        0, lambda: fill_button.config(state=tk.NORMAL)
-                    )
-                except PlaywrightMissing:
-                    self._browser_assistant = None
-                    self.root.after(0, lambda: messagebox.showinfo(
-                        trans['browser_assist_title'],
-                        trans['browser_assist_missing'],
-                    ))
-                    self.root.after(
-                        0, lambda: open_button.config(state=tk.NORMAL)
-                    )
-                except Exception as exc:
-                    self._browser_assistant = None
-                    report(str(exc))
-                    self.root.after(
-                        0, lambda: open_button.config(state=tk.NORMAL)
-                    )
+            def failed(error):
+                self._browser_session = None
+                session.shutdown()
+                report(str(error))
+                set_buttons(tk.NORMAL, tk.DISABLED)
 
-            in_browser_thread(run)
+            session.submit(
+                lambda assistant: assistant.start(),
+                on_success=lambda page: (
+                    report(trans['browser_assist_running']),
+                    set_buttons(tk.DISABLED, tk.NORMAL),
+                ),
+                on_error=failed,
+            )
 
         def fill_form():
-            assistant = getattr(self, '_browser_assistant', None)
-            if assistant is None:
+            session = getattr(self, '_browser_session', None)
+            if session is None:
                 return
             data = self.browser_form_data()
 
-            def run():
-                try:
-                    result = assistant.fill(data)
-                except Exception as exc:
-                    report(str(exc))
-                    return
+            def done(result):
                 lines = []
                 if result.filled:
                     lines.append(
@@ -5890,17 +5918,26 @@ class ProductGeneratorGUI:
                         f"{trans['browser_assist_skipped']} "
                         f"{', '.join(result.skipped)}"
                     )
-                report('\n'.join(lines) or trans['browser_assist_none'])
+                report(
+                    '\n'.join(lines) or trans['browser_assist_none']
+                )
 
-            in_browser_thread(run)
+            session.submit(
+                lambda assistant: assistant.fill(data),
+                on_success=done,
+                on_error=lambda error: report(str(error)),
+            )
 
-        def close_browser():
-            assistant = getattr(self, '_browser_assistant', None)
-            self._browser_assistant = None
-            fill_button.config(state=tk.DISABLED)
-            open_button.config(state=tk.NORMAL)
-            if assistant is not None:
-                in_browser_thread(assistant.close)
+        def stop_session():
+            session = getattr(self, '_browser_session', None)
+            self._browser_session = None
+            if session is not None:
+                # Der Thread schliesst den Browser selbst und endet danach.
+                session.shutdown()
+
+        def close_all():
+            stop_session()
+            window.destroy()
 
         open_button = ttk.Button(
             buttons, text=trans['browser_assist_open'], command=open_browser
@@ -5912,12 +5949,9 @@ class ProductGeneratorGUI:
         )
         fill_button.pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(
-            buttons, text=trans['browser_assist_close'],
-            command=close_browser,
-        ).pack(side=tk.LEFT, padx=(6, 0))
-        window.protocol("WM_DELETE_WINDOW", lambda: (
-            close_browser(), window.destroy()
-        ))
+            buttons, text=trans['browser_assist_close'], command=close_all,
+        ).pack(side=tk.RIGHT)
+        window.protocol("WM_DELETE_WINDOW", close_all)
 
     def copy_listing(self):
         """Kopiert den vollständigen Beitrag inklusive Pflichttext."""
@@ -6857,10 +6891,18 @@ class TabbedProductGeneratorGUI:
 
     @staticmethod
     def release_controller(controller):
-        """Schließt die Produktakte eines Controllers genau einmal."""
+        """Schließt Produktakte und Browser eines Controllers genau einmal."""
         if getattr(controller, '_store_released', False):
             return
         controller._store_released = True
+        # Sonst bleibt ein offener Browser samt Playwright-Prozess zurueck.
+        session = getattr(controller, '_browser_session', None)
+        if session is not None:
+            controller._browser_session = None
+            try:
+                session.shutdown()
+            except Exception:
+                pass
         try:
             controller.listing_store.close()
         except Exception:

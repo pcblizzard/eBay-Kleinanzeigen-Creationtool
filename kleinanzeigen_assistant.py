@@ -12,6 +12,9 @@ Weg bleibt eine Grauzone, die der Nutzer bewusst wählen muss.
 
 from __future__ import annotations
 
+import os
+import queue
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -53,8 +56,24 @@ PHOTO_INPUT_SELECTORS = (
 )
 
 
+# Welcher Browser gesteuert wird. "msedge" und "chrome" nutzen die bereits
+# installierte Anwendung - dann muss Playwright keinen eigenen Browser laden.
+# (engine, channel); channel=None bedeutet den mitgelieferten Browser.
+BROWSER_CHOICES = {
+    'msedge': ('chromium', 'msedge'),
+    'chrome': ('chromium', 'chrome'),
+    'chromium': ('chromium', None),
+    'firefox': ('firefox', None),
+}
+DEFAULT_BROWSER = 'msedge' if os.name == 'nt' else 'chromium'
+
+
 class PlaywrightMissing(RuntimeError):
     """Playwright ist nicht installiert."""
+
+
+class BrowserMissing(RuntimeError):
+    """Der gewaehlte Browser ist nicht auffindbar."""
 
 
 @dataclass
@@ -114,9 +133,10 @@ class KleinanzeigenFormAssistant:
     überträgt ``fill`` die Angaben in die dann sichtbaren Felder.
     """
 
-    def __init__(self, profile_dir, headless=False):
+    def __init__(self, profile_dir, headless=False, browser=DEFAULT_BROWSER):
         self.profile_dir = Path(profile_dir)
         self.headless = headless
+        self.browser = browser if browser in BROWSER_CHOICES else DEFAULT_BROWSER
         self._playwright = None
         self._context = None
         self.page = None
@@ -125,21 +145,50 @@ class KleinanzeigenFormAssistant:
         """Startet den sichtbaren Browser mit dem dauerhaften Profil."""
         sync_playwright = import_playwright()
         self.profile_dir.mkdir(parents=True, exist_ok=True)
+        engine_name, channel = BROWSER_CHOICES[self.browser]
         self._playwright = sync_playwright().start()
-        # Dauerhaftes Profil: die Anmeldung bleibt erhalten, der Nutzer meldet
-        # sich einmal von Hand an. Kein verstecktes Hinterlegen von Passwoertern.
-        self._context = self._playwright.chromium.launch_persistent_context(
-            str(self.profile_dir),
-            headless=self.headless,
-            viewport=None,
-            args=["--start-maximized"],
-        )
+        engine = getattr(self._playwright, engine_name)
+        options = {
+            "headless": self.headless,
+            "viewport": None,
+        }
+        if channel:
+            # Nutzt die vorhandene Installation, kein eigener Download.
+            options["channel"] = channel
+        elif engine_name == "chromium":
+            options["args"] = ["--start-maximized"]
+        try:
+            # Dauerhaftes Profil: die Anmeldung bleibt erhalten, der Nutzer
+            # meldet sich einmal von Hand an. Es werden keine Passwoerter im
+            # Werkzeug hinterlegt.
+            self._context = engine.launch_persistent_context(
+                str(self.profile_dir), **options
+            )
+        except Exception as error:
+            self._playwright.stop()
+            self._playwright = None
+            raise BrowserMissing(self.missing_hint(self.browser, error)) from error
         self.page = (
             self._context.pages[0] if self._context.pages
             else self._context.new_page()
         )
         self.page.goto(url, wait_until="domcontentloaded")
         return self.page
+
+    @staticmethod
+    def missing_hint(browser, error):
+        """Nennt den konkreten Grund statt der rohen Playwright-Meldung."""
+        if browser in ('msedge', 'chrome'):
+            names = {'msedge': 'Microsoft Edge', 'chrome': 'Google Chrome'}
+            return (
+                f"{names[browser]} wurde nicht gefunden. Entweder installieren "
+                f"oder im Auswahlfeld einen anderen Browser waehlen.\n\n{error}"
+            )
+        engine = BROWSER_CHOICES[browser][0]
+        return (
+            f"Der mitgelieferte Browser fehlt. Einmalig nachinstallieren:\n"
+            f"    python -m playwright install {engine}\n\n{error}"
+        )
 
     def close(self):
         try:
@@ -238,3 +287,56 @@ class KleinanzeigenFormAssistant:
                 except Exception:
                     report.add("photos", False)
         return report
+
+
+class BrowserSession:
+    """Hält Playwright in genau einem Thread.
+
+    Die Sync-API von Playwright bindet ihren Event-Loop an den Thread, der sie
+    erzeugt hat. Wird sie aus einem anderen Thread benutzt, bricht die
+    Verbindung zum Browser ab - sichtbar als „coroutine ... was never awaited",
+    „Task was destroyed but it is pending" und schliesslich EPIPE.
+
+    Deshalb besitzt ein einziger Arbeits-Thread den Browser, und alle Aufrufe
+    laufen als Auftraege durch dessen Warteschlange. Die Rueckmeldungen kommen
+    aus diesem Thread; die Oberflaeche muss sie selbst in ihren eigenen
+    zurueckreichen.
+    """
+
+    def __init__(self, profile_dir, browser=DEFAULT_BROWSER, headless=False):
+        self.assistant = KleinanzeigenFormAssistant(
+            profile_dir, headless=headless, browser=browser
+        )
+        self._jobs = queue.Queue()
+        self._thread = threading.Thread(
+            target=self._worker, daemon=True, name="kleinanzeigen-browser"
+        )
+        self._thread.start()
+
+    def _worker(self):
+        while True:
+            job = self._jobs.get()
+            if job is None:
+                break
+            action, on_success, on_error = job
+            try:
+                result = action(self.assistant)
+            except Exception as error:
+                if on_error is not None:
+                    on_error(error)
+            else:
+                if on_success is not None:
+                    on_success(result)
+        # Schliessen gehoert in denselben Thread wie das Oeffnen.
+        self.assistant.close()
+
+    def submit(self, action, on_success=None, on_error=None):
+        """Reiht einen Aufruf ein, der im Browser-Thread ausgeführt wird."""
+        self._jobs.put((action, on_success, on_error))
+
+    def shutdown(self):
+        """Beendet den Thread und schliesst den Browser geordnet."""
+        self._jobs.put(None)
+
+    def is_running(self):
+        return self._thread.is_alive()
