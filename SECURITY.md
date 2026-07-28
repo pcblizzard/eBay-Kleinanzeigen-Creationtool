@@ -17,10 +17,10 @@ Dateien umgeht** und welche Prüfungen laufen. Es ist eine Selbstauskunft der
 Entwicklung und ausdrücklich **kein unabhängiges Sicherheitsaudit**. Eine
 Prüfung durch Dritte hat nicht stattgefunden.
 
-Wer eine belastbare Aussage braucht, sollte den Quelltext selbst lesen; die im
-Folgenden genannten Punkte lassen sich daran nachvollziehen. Das Repository ist
-derzeit privat – ohne Zugriff darauf ist keine der Angaben überprüfbar, und
-dieses Dokument bleibt dann eine bloße Behauptung.
+Wer eine belastbare Aussage braucht, sollte den Quelltext selbst lesen – er ist
+vollständig offen, und jeder der im Folgenden genannten Punkte lässt sich daran
+nachvollziehen. Genau dafür ist dieses Dokument gedacht: als Wegweiser zu den
+Stellen, an denen man selbst nachsieht, nicht als Ersatz dafür.
 
 ## Was die Anwendung ist
 
@@ -98,18 +98,18 @@ Bei jedem Push und Pull Request laufen:
 - **Tests** unter Ubuntu und Windows für Python 3.10, 3.12 und 3.14
 - **`pip-audit`** gegen bekannte Schwachstellen in Abhängigkeiten
 - **Gitleaks** über die vollständige Historie
+- **CodeQL** als statische Sicherheitsanalyse, zusätzlich wöchentlich
 
 Dependabot prüft wöchentlich Python- und Actions-Abhängigkeiten.
 
-Ein **CodeQL**-Workflow ist eingerichtet, läuft derzeit aber nicht: Auf
-privaten Repositories setzt Code-Scanning GitHub Advanced Security voraus. Der
-Job wird deshalb übersprungen und startet von selbst, sobald das Repository
-öffentlich ist. Die bisherigen CodeQL-Funde wurden behoben – die
-Zusammenfassung dazu steht im [CHANGELOG](CHANGELOG.md).
+Die Ergebnisse sind im Tab *Actions* beziehungsweise *Security* einsehbar –
+maschinell erhoben und damit belastbarer als die Beschreibung in diesem
+Dokument. CodeQL hat dabei bereits echte Fehler gefunden, die behoben wurden;
+die Zusammenfassung steht im [CHANGELOG](CHANGELOG.md).
 
-Die Ergebnisse der laufenden Prüfungen sind im Tab *Actions* einsehbar, für
-das private Repository allerdings nur mit Zugriff darauf. Wer die Aussagen
-dieses Dokuments unabhängig überprüfen will, braucht Zugang zum Quelltext.
+Der CodeQL-Job überspringt sich selbst, solange das Repository privat ist:
+Code-Scanning setzt dann GitHub Advanced Security voraus, und der Job fiele
+sonst dauerhaft aus – was daran gewöhnt, Fehlschläge zu übersehen.
 
 ## Bekannte Einschränkungen
 
