@@ -1499,3 +1499,25 @@ class UrlAndMarkupTests(unittest.TestCase):
             "Web-Vorschlag",
         )
         self.assertEqual(name("https://fremd.test/?x=amazon.de"), "fremd.test")
+
+
+class ShpockProfileTests(unittest.TestCase):
+    """Shpock hat die knappsten Grenzen aller Profile."""
+
+    def test_shpock_limits_match_the_documented_values(self):
+        profile = PLATFORM_PROFILES["shpock"]
+        self.assertEqual(profile.title_limit, 45)
+        self.assertEqual(profile.description_limit, 500)
+
+    def test_short_profiles_are_compacted_not_merely_cut(self):
+        stub = SimpleNamespace(legal_clause="Privatverkauf.")
+        body = "\n\n".join([f"Absatz {number} " + "x" * 120
+                            for number in range(1, 8)])
+        compact = ProductGeneratorGUI.compact_draft(stub, body, "shpock")
+        full = ProductGeneratorGUI.full_platform_description(stub, compact)
+        self.assertLessEqual(
+            len(full), PLATFORM_PROFILES["shpock"].description_limit
+        )
+        # Ganze Absaetze, kein abgeschnittener Satz am Ende.
+        self.assertTrue(compact.startswith("Absatz 1"))
+        self.assertFalse(compact.endswith("x" * 5 + "…"))

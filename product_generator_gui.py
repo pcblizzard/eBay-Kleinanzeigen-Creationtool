@@ -35,7 +35,12 @@ import webbrowser
 import urllib.error
 import xml.etree.ElementTree as ET
 
-from listing_store import ListingStore, PLATFORM_PROFILES, safe_filename
+from listing_store import (
+    COMPACT_DESCRIPTION_LIMIT,
+    ListingStore,
+    PLATFORM_PROFILES,
+    safe_filename,
+)
 from ebay_listing import (
     DEFAULT_LOCATION_KEY,
     EbayError,
@@ -68,6 +73,7 @@ PLATFORM_IMAGE_LIMITS = {
     'ebay': 24,
     'ebay_detailed': 24,
     'ebay_mobile': 24,
+    'shpock': 5,
 }
 OWN_IMAGE_MAX_EDGE = 2000
 OWN_IMAGE_MAX_BYTES = 12 * 1024 * 1024
@@ -2130,9 +2136,9 @@ class ProductGeneratorGUI:
             for key, profile in PLATFORM_PROFILES.items():
                 if key not in self.platform_drafts:
                     body = self.platform_body_from_draft(draft)
-                    if key == 'ebay_mobile':
-                        body = self.mobile_draft(body)
-                    elif key in ('kleinanzeigen', 'ebay'):
+                    if profile.description_limit <= COMPACT_DESCRIPTION_LIMIT:
+                        body = self.compact_draft(body, key)
+                    else:
                         body = self.fit_platform_body(
                             body, profile.description_limit
                         )
@@ -2213,9 +2219,13 @@ class ProductGeneratorGUI:
             return value.split(marker, 1)[0].rstrip()
         return value
 
-    def mobile_draft(self, body):
-        """Erzeugt ohne neue Behauptungen eine kompakte mobile Vorschau."""
-        limit = PLATFORM_PROFILES['ebay_mobile'].description_limit
+    def compact_draft(self, body, platform='ebay_mobile'):
+        """Verdichtet einen Entwurf auf ganze Absätze, ohne Neues zu erfinden.
+
+        Für knappe Profile wie die mobile eBay-Vorschau (800 Zeichen) oder
+        Shpock (500) reicht bloßes Abschneiden nicht.
+        """
+        limit = PLATFORM_PROFILES[platform].description_limit
         legal = self.legal_clause.strip()
         available = max(80, limit - len(legal) - 10)
         paragraphs = []
@@ -2494,8 +2504,11 @@ class ProductGeneratorGUI:
             body = self.merge_assistant_details(
                 draft['description'], condition, items, price_text
             )
-            if platform == 'ebay_mobile':
-                body = self.mobile_draft(body)
+            if (
+                PLATFORM_PROFILES[platform].description_limit
+                <= COMPACT_DESCRIPTION_LIMIT
+            ):
+                body = self.compact_draft(body, platform)
             draft['description'] = body
             self.persist_platform_draft(platform, draft)
         self.selected_variant['listing_condition'] = condition
