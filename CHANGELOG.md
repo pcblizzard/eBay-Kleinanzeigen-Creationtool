@@ -4,6 +4,20 @@ Alle wesentlichen Änderungen an diesem Projekt werden in dieser Datei dokumenti
 
 ## Unveröffentlicht
 
+### Hinzugefügt
+
+- Angebote lassen sich über die offiziellen eBay-Schnittstellen einstellen:
+  Benutzer-Einwilligung per OAuth, Upload eigener Fotos zu den eBay Picture
+  Services, Lagerort, Bestandsartikel, Angebot und Veröffentlichung. Vor dem
+  Veröffentlichen nennt eine Rückfrage Titel, Preis, Kategorie, Anzahl der
+  Fotos und die Umgebung; die Schritte davor verändern nichts an aktiven
+  Angeboten.
+- Eigene Produktfotos verwalten, sortieren und aufbereiten. Beim Export
+  werden Standortdaten (GPS) entfernt, die Drehung korrigiert und die Größe
+  angepasst; die Dateien werden in Anzeigereihenfolge benannt.
+- Der Wunschpreis kennt die bei Kleinanzeigen übliche Preisart: VB,
+  Festpreis oder „Zu verschenken“.
+
 ### Nicht umsetzbar: Anzeigen automatisch bei Kleinanzeigen einstellen
 
 Ein assistierter Browser-Ansatz (Playwright, sichtbares Fenster, eigenes

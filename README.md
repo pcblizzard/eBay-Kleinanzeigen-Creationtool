@@ -30,6 +30,8 @@ Ein Python-Tool zur Erstellung prüfbarer Produktbeschreibungen mit fest angehä
 - ✅ **eBay-Kategorievorschläge**: Passende Kategorien über die aktuelle Taxonomy API
 - ✅ **eBay-Artikelmerkmale**: Pflicht-, empfohlene und optionale Angaben dynamisch prüfen
 - ✅ **eBay-Datenprüfung**: Fehlende Pflichtmerkmale vor einem späteren Export sichtbar machen
+- ✅ **eBay-Angebot einstellen**: Offizieller Weg über OAuth, Bild-Upload und Sell-Inventory-API
+- ✅ **Eigene Produktfotos**: Sortieren, aufbereiten und Standortdaten (GPS) entfernen
 - ✅ **Inserat-Assistent**: Zustand, Lieferumfang, Preis und Vollständigkeit zentral prüfen
 - ✅ **Plattform-Entwürfe**: Kleinanzeigen, eBay, ausführliches eBay und mobile eBay-Vorschau unabhängig bearbeiten
 - ✅ **Zeichenlimits**: 65/4.000 für Kleinanzeigen sowie 80/4.000, 80/500.000 und 80/800 für eBay-Profile
@@ -213,12 +215,47 @@ Platzhalterdaten. Das Tool überspringt diese Vorschläge deshalb in der Sandbox
 bereits im Suchtreffer enthaltene Kategorien und deren Merkmale können weiterhin
 geprüft werden. Für echte Vorschläge ist die Production-Umgebung erforderlich.
 
-Beide Integrationen dienen zunächst der Recherche und Entwurfserstellung.
-Kleinanzeigen Agent dokumentiert keine Funktion zum Veröffentlichen eigener
-Anzeigen. Das Einstellen auf eBay würde zusätzlich einen Benutzer-OAuth-Flow,
-Versand-/Zahlungsrichtlinien und weitere Pflichtangaben benötigen und ist noch
-nicht aktiviert. Der neue eBay-Prüfbereich veröffentlicht daher ausdrücklich
-nichts und verändert keine eBay-Angebote.
+### Angebot bei eBay einstellen
+
+Über **🛒 Bei eBay einstellen…** wird ein Angebot auf dem offiziellen Weg
+angelegt. Voraussetzungen sind Client-ID und Client-Secret sowie ein **RuName**
+aus dem eBay Developers Program. Der Ablauf im Dialog:
+
+1. **Zugriff erteilen.** Der Browser öffnet die eBay-Einwilligungsseite. Nach
+   dem Zustimmen leitet eBay auf deine RuName-Adresse weiter; die vollständige
+   Adresse wird zurück in das Feld kopiert. Gespeichert wird ausschließlich der
+   Erneuerungstoken, und zwar im Schlüsselspeicher des Betriebssystems.
+2. **Richtlinien und Standort.** Versand-, Zahlungs- und Rücknahmerichtlinie
+   werden aus dem Konto geladen und ausgewählt; Postleitzahl und Land ergeben
+   den Lagerort, ohne den eBay nicht veröffentlicht.
+3. **Angebot.** Menge festlegen, **Angaben prüfen** nennt alles Fehlende.
+
+**Angebot anlegen und veröffentlichen** lädt zuerst die eigenen Fotos zu den
+eBay Picture Services, legt Lagerort, Bestandsartikel und Angebot an und
+veröffentlicht zuletzt. Alle Schritte vor der Veröffentlichung verändern nichts
+an bestehenden Angeboten. Vorher nennt eine Rückfrage Titel, Preis, Kategorie,
+Anzahl der Fotos und die gewählte Umgebung — es entsteht ein öffentliches,
+kostenpflichtiges Angebot.
+
+Zum Ausprobieren eignet sich die Sandbox-Umgebung. Die Zugangsdaten dafür sind
+andere als die der Produktionsumgebung.
+
+Kleinanzeigen Agent dokumentiert dagegen keine Funktion zum Veröffentlichen;
+alle Endpunkte sind lesend. Anzeigen werden dort von Hand eingestellt — das
+Werkzeug bereitet Text und Fotos vollständig vor.
+
+### Eigene Produktfotos
+
+Neben den online gefundenen Bildern lassen sich in der Cover-Spalte eigene
+Fotos hinterlegen, sortieren und entfernen; das erste ist das Hauptbild.
+Gespeichert werden nur Dateipfade, das Entfernen löscht nie die Originaldatei.
+
+Beim Produktordner-Export und beim eBay-Upload werden die Fotos aufbereitet:
+**sämtliche EXIF-Daten werden entfernt**, die Drehung nach der
+Orientierungsangabe korrigiert und die Kantenlänge begrenzt. Das Entfernen der
+Metadaten ist kein Beiwerk — Handyfotos enthalten GPS-Koordinaten, und wer den
+Artikel zu Hause fotografiert, veröffentlicht sonst mit dem Bild seine
+Wohnadresse. Kleinanzeigen erlaubt bis zu 20 Bilder, eBay bis zu 24.
 
 Der Kleinanzeigen-Verbindungstest verwendet eine reguläre Ein-Treffer-Abfrage
 mit eindeutigem App-User-Agent. Strukturierte API-Fehler werden ohne Schlüssel
@@ -309,6 +346,7 @@ Text anhand der mitgespeicherten Quelle geprüft werden.
 
 - `product_generator_gui.py` - Oberfläche, Online-Quellen und Entwurfslogik
 - `listing_store.py` - SQLite-Produktakte, Plattformprofile und Paketexport
+- `ebay_listing.py` - Offizieller eBay-Angebotsfluss (OAuth, Bilder, Inventory-API)
 - `products.json` - Mitgelieferte lokale Produktdatenbank
 - `test_product_generator.py` - Testsuite (`python -m unittest`)
 - `product_listings/` - Generierte Textdateien (oder Speicherpfad nach Wahl)

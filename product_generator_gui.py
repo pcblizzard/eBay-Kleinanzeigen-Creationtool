@@ -29,10 +29,21 @@ import time
 import unicodedata
 import urllib.parse
 import urllib.request
+import webbrowser
 import urllib.error
 import xml.etree.ElementTree as ET
 
 from listing_store import ListingStore, PLATFORM_PROFILES, safe_filename
+from ebay_listing import (
+    DEFAULT_LOCATION_KEY,
+    EbayError,
+    EbayListingClient,
+    ListingDraft,
+    authorization_code,
+    condition_code,
+    consent_url,
+    sku_for,
+)
 
 try:
     from PIL import Image, ImageOps, ImageTk
@@ -162,6 +173,51 @@ TRANSLATIONS = {
         ),
         "own_images_replace_note": (
             "Eigene Fotos ersetzen im Export die Herstellerbilder."
+        ),
+        "ebay_publish": "🛒 Bei eBay einstellen…",
+        "ebay_publish_title": "Angebot bei eBay einstellen",
+        "ebay_consent_frame": "1. Zugriff auf dein eBay-Konto",
+        "ebay_consent_missing": "Noch keine Einwilligung erteilt.",
+        "ebay_consent_present": "Einwilligung liegt vor.",
+        "ebay_consent_start": "Zugriff im Browser erteilen…",
+        "ebay_consent_paste": "Adresse nach der Zustimmung hier einfügen:",
+        "ebay_consent_save": "Einwilligung speichern",
+        "ebay_consent_saved": "Einwilligung gespeichert.",
+        "ebay_consent_hint": (
+            "Der Browser öffnet die eBay-Seite. Nach dem Zustimmen leitet eBay "
+            "auf deine RuName-Adresse weiter — kopiere die vollständige Adresse "
+            "aus der Adresszeile hierher."
+        ),
+        "ebay_runame_label": "RuName (Redirect-URL-Name):",
+        "ebay_policies_frame": "2. Richtlinien und Standort",
+        "ebay_policy_fulfillment": "Versand:",
+        "ebay_policy_payment": "Zahlung:",
+        "ebay_policy_return": "Rücknahme:",
+        "ebay_policies_load": "Richtlinien laden",
+        "ebay_postal_code": "PLZ:",
+        "ebay_country": "Land:",
+        "ebay_offer_frame": "3. Angebot",
+        "ebay_quantity": "Menge:",
+        "ebay_check": "Angaben prüfen",
+        "ebay_publish_action": "Angebot anlegen und veröffentlichen",
+        "ebay_publish_missing": "Es fehlen noch:",
+        "dialog_close": "Schließen",
+        "ebay_ready": "Alle Pflichtangaben vorhanden.",
+        "ebay_confirm": (
+            "Damit entsteht ein öffentliches, kostenpflichtiges eBay-Angebot "
+            "unter deinem Konto.\n\nTitel: {title}\nPreis: {price} EUR\n"
+            "Kategorie: {category}\nFotos: {images}\nUmgebung: {environment}"
+            "\n\nJetzt wirklich veröffentlichen?"
+        ),
+        "ebay_working": "Wird an eBay übertragen…",
+        "ebay_published": "Angebot veröffentlicht. Angebotsnummer:",
+        "ebay_no_credentials": (
+            "Client-ID, Client-Secret und RuName werden benötigt. "
+            "Client-ID und Secret unter Einstellungen → Marktplatz-APIs."
+        ),
+        "ebay_no_category": (
+            "Es ist noch keine eBay-Kategorie gewählt. Wähle sie im "
+            "eBay-Prüfbereich aus."
         ),
         "save_image_title": "Produktbild speichern",
         "image_saved": "Produktbild gespeichert:",
@@ -334,6 +390,50 @@ TRANSLATIONS = {
         ),
         "own_images_replace_note": (
             "Own photos replace the manufacturer images in the export."
+        ),
+        "ebay_publish": "🛒 List on eBay…",
+        "ebay_publish_title": "List the offer on eBay",
+        "ebay_consent_frame": "1. Access to your eBay account",
+        "ebay_consent_missing": "No consent granted yet.",
+        "ebay_consent_present": "Consent is in place.",
+        "ebay_consent_start": "Grant access in the browser…",
+        "ebay_consent_paste": "Paste the address after consenting:",
+        "ebay_consent_save": "Save consent",
+        "ebay_consent_saved": "Consent saved.",
+        "ebay_consent_hint": (
+            "The browser opens the eBay page. After you consent, eBay "
+            "redirects to your RuName address — copy the complete address "
+            "from the address bar to here."
+        ),
+        "ebay_runame_label": "RuName (redirect URL name):",
+        "ebay_policies_frame": "2. Policies and location",
+        "ebay_policy_fulfillment": "Shipping:",
+        "ebay_policy_payment": "Payment:",
+        "ebay_policy_return": "Returns:",
+        "ebay_policies_load": "Load policies",
+        "ebay_postal_code": "Postal code:",
+        "ebay_country": "Country:",
+        "ebay_offer_frame": "3. Offer",
+        "ebay_quantity": "Quantity:",
+        "ebay_check": "Check details",
+        "ebay_publish_action": "Create and publish offer",
+        "ebay_publish_missing": "Still missing:",
+        "dialog_close": "Close",
+        "ebay_ready": "All required details are present.",
+        "ebay_confirm": (
+            "This creates a public eBay listing under your account that may "
+            "incur fees.\n\nTitle: {title}\nPrice: {price} EUR\n"
+            "Category: {category}\nPhotos: {images}\nEnvironment: {environment}"
+            "\n\nReally publish now?"
+        ),
+        "ebay_working": "Sending to eBay…",
+        "ebay_published": "Offer published. Listing number:",
+        "ebay_no_credentials": (
+            "Client ID, client secret and RuName are required. "
+            "Client ID and secret under Settings → Marketplace APIs."
+        ),
+        "ebay_no_category": (
+            "No eBay category selected yet. Pick one in the eBay check area."
         ),
         "save_image_title": "Save product image",
         "image_saved": "Product image saved:",
@@ -889,6 +989,11 @@ class ProductGeneratorGUI:
         self._ebay_access_token_expires = 0
         self._ebay_result_metadata = {}
         self._market_result_metadata = {}
+        self.ebay_ru_name = str(config.get('ebay_ru_name', ''))
+        self.ebay_postal_code = str(config.get('ebay_postal_code', ''))
+        self.ebay_country = str(config.get('ebay_country', 'DE'))
+        self.ebay_policy_ids = {}
+        self._ebay_policy_entries = {}
         self.ebay_environment = config.get('ebay_environment', 'production')
         if self.ebay_environment not in ('production', 'sandbox'):
             self.ebay_environment = 'production'
@@ -995,6 +1100,9 @@ class ProductGeneratorGUI:
                 'save_path': self.save_path,
                 'legal_clause': self.legal_clause,
                 'ebay_environment': self.ebay_environment,
+                'ebay_ru_name': self.ebay_ru_name,
+                'ebay_postal_code': self.ebay_postal_code,
+                'ebay_country': self.ebay_country,
                 'restore_session': self.restore_session_enabled,
                 'clear_session_on_exit': self.clear_session_on_exit,
                 'providers': {
@@ -1233,6 +1341,7 @@ class ProductGeneratorGUI:
             value=trans['price_type_values'].split('|')[0]
         )
         self.price_basis_var = tk.StringVar(value='active')
+        self.ebay_quantity_var = tk.StringVar(value='1')
         self.price_basis_display_var = tk.StringVar(
             value=trans['price_active']
         )
@@ -2722,7 +2831,7 @@ class ProductGeneratorGUI:
             )
             status = (
                 trans['ebay_complete'] if value
-                else trans['ebay_missing'] if aspect['required'] else ''
+                else trans['ebay_publish_missing'] if aspect['required'] else ''
             )
             self.ebay_aspect_tree.insert(
                 '', tk.END, iid=str(index),
@@ -5721,6 +5830,322 @@ class ProductGeneratorGUI:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def ebay_client(self):
+        """Erzeugt einen Client mit den gespeicherten Zugangsdaten."""
+        client_id = self.get_secret('ebay_client_id')
+        client_secret = self.get_secret('ebay_client_secret')
+        if not client_id or not client_secret or not self.ebay_ru_name:
+            raise EbayError(TRANSLATIONS[self.language]['ebay_no_credentials'])
+        client = EbayListingClient(
+            client_id, client_secret, environment=self.ebay_environment
+        )
+        refresh_token = self.get_secret('ebay_refresh_token')
+        if refresh_token:
+            client.tokens.refresh_token = refresh_token
+        return client
+
+    def ebay_draft(self):
+        """Stellt aus dem aktuellen Beitrag ein Angebot zusammen."""
+        variant = self.selected_variant or {}
+        draft = self.platform_drafts.get('ebay', {})
+        amount = self.parse_price(self.asking_price_var.get())
+        return ListingDraft(
+            sku=sku_for(variant.get('name', ''), str(
+                variant.get('ean') or variant.get('gtin') or ''
+            )),
+            title=draft.get('title', '') or variant.get('name', ''),
+            description=self.full_platform_description(
+                draft.get('description', '')
+            ),
+            condition=condition_code(self.condition_var.get()),
+            price='' if amount is None else f"{amount:.2f}",
+            quantity=max(1, int(self.ebay_quantity_var.get() or 1)),
+            category_id=str(variant.get('ebay_category_id', '')),
+            aspects=dict(self.ebay_aspect_values or {}),
+            merchant_location_key=DEFAULT_LOCATION_KEY,
+            fulfillment_policy_id=self.ebay_policy_ids.get('fulfillment', ''),
+            payment_policy_id=self.ebay_policy_ids.get('payment', ''),
+            return_policy_id=self.ebay_policy_ids.get('return', ''),
+            image_urls=[],
+        )
+
+    def open_ebay_publisher(self):
+        """Führt Schritt für Schritt zum offiziell eingestellten Angebot."""
+        trans = TRANSLATIONS[self.language]
+        if not self.selected_variant or not self.product_record_id:
+            messagebox.showwarning(
+                trans['no_selection'], trans['no_selection']
+            )
+            return
+        self.save_visible_platform_draft()
+
+        window = tk.Toplevel(self.root)
+        window.title(trans['ebay_publish_title'])
+        window.transient(self.root.winfo_toplevel())
+        outer = ttk.Frame(window, padding=12)
+        outer.pack(fill=tk.BOTH, expand=True)
+
+        status_var = tk.StringVar()
+
+        def report(message):
+            self.root.after(0, lambda: status_var.set(message))
+
+        def in_thread(action):
+            threading.Thread(target=action, daemon=True).start()
+
+        # --- 1. Einwilligung -------------------------------------------
+        consent = ttk.LabelFrame(
+            outer, text=trans['ebay_consent_frame'], padding=8
+        )
+        consent.pack(fill=tk.X)
+        ttk.Label(
+            consent, text=trans['ebay_consent_hint'],
+            wraplength=520, justify=tk.LEFT, foreground='#555555',
+        ).pack(fill=tk.X)
+        runame_row = ttk.Frame(consent)
+        runame_row.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(
+            runame_row, text=trans['ebay_runame_label'], width=26
+        ).pack(side=tk.LEFT)
+        runame_var = tk.StringVar(value=self.ebay_ru_name)
+        ttk.Entry(runame_row, textvariable=runame_var).pack(
+            side=tk.LEFT, fill=tk.X, expand=True
+        )
+        consent_state = tk.StringVar(
+            value=trans['ebay_consent_present']
+            if self.get_secret('ebay_refresh_token')
+            else trans['ebay_consent_missing']
+        )
+        ttk.Label(consent, textvariable=consent_state).pack(
+            fill=tk.X, pady=(6, 0)
+        )
+
+        def start_consent():
+            self.ebay_ru_name = runame_var.get().strip()
+            self.save_config()
+            try:
+                url = consent_url(
+                    self.get_secret('ebay_client_id'),
+                    self.ebay_ru_name,
+                    self.ebay_environment,
+                )
+            except EbayError as error:
+                report(str(error))
+                return
+            webbrowser.open(url)
+
+        ttk.Button(
+            consent, text=trans['ebay_consent_start'], command=start_consent
+        ).pack(anchor=tk.W, pady=(6, 0))
+        ttk.Label(consent, text=trans['ebay_consent_paste']).pack(
+            anchor=tk.W, pady=(6, 0)
+        )
+        redirect_var = tk.StringVar()
+        ttk.Entry(consent, textvariable=redirect_var).pack(fill=tk.X)
+
+        def save_consent():
+            self.ebay_ru_name = runame_var.get().strip()
+            self.save_config()
+
+            def run():
+                try:
+                    code = authorization_code(redirect_var.get())
+                    client = self.ebay_client()
+                    tokens = client.exchange_code(code, self.ebay_ru_name)
+                    # Nur der Erneuerungstoken wird dauerhaft abgelegt.
+                    self.set_secret('ebay_refresh_token', tokens.refresh_token)
+                    self.audit_security_event('ebay_consent', 'ebay')
+                except Exception as error:
+                    self.audit_security_event(
+                        'ebay_consent', 'ebay', 'failed'
+                    )
+                    report(str(error))
+                    return
+                self.root.after(0, lambda: (
+                    consent_state.set(trans['ebay_consent_present']),
+                    redirect_var.set(''),
+                ))
+                report(trans['ebay_consent_saved'])
+
+            in_thread(run)
+
+        ttk.Button(
+            consent, text=trans['ebay_consent_save'], command=save_consent
+        ).pack(anchor=tk.W, pady=(6, 0))
+
+        # --- 2. Richtlinien und Standort -------------------------------
+        policies = ttk.LabelFrame(
+            outer, text=trans['ebay_policies_frame'], padding=8
+        )
+        policies.pack(fill=tk.X, pady=(10, 0))
+        policy_vars = {}
+        policy_options = {}
+        for row, (kind, label_key) in enumerate((
+            ('fulfillment', 'ebay_policy_fulfillment'),
+            ('payment', 'ebay_policy_payment'),
+            ('return', 'ebay_policy_return'),
+        )):
+            ttk.Label(policies, text=trans[label_key], width=14).grid(
+                row=row, column=0, sticky=tk.W, pady=2
+            )
+            policy_vars[kind] = tk.StringVar()
+            combo = ttk.Combobox(
+                policies, textvariable=policy_vars[kind],
+                state='readonly', width=44,
+            )
+            combo.grid(row=row, column=1, sticky=tk.EW, pady=2)
+            policy_options[kind] = combo
+        policies.columnconfigure(1, weight=1)
+
+        address_row = ttk.Frame(policies)
+        address_row.grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=(6, 0))
+        ttk.Label(address_row, text=trans['ebay_postal_code']).pack(side=tk.LEFT)
+        postal_var = tk.StringVar(value=self.ebay_postal_code)
+        ttk.Entry(address_row, textvariable=postal_var, width=10).pack(
+            side=tk.LEFT, padx=(4, 12)
+        )
+        ttk.Label(address_row, text=trans['ebay_country']).pack(side=tk.LEFT)
+        country_var = tk.StringVar(value=self.ebay_country)
+        ttk.Entry(address_row, textvariable=country_var, width=6).pack(
+            side=tk.LEFT, padx=(4, 0)
+        )
+
+        def load_policies():
+            def run():
+                try:
+                    client = self.ebay_client()
+                    found = client.policies()
+                except Exception as error:
+                    report(str(error))
+                    return
+
+                def apply():
+                    for kind, entries in found.items():
+                        labels = [entry['name'] for entry in entries]
+                        policy_options[kind].configure(values=labels)
+                        self._ebay_policy_entries[kind] = entries
+                        if entries:
+                            policy_vars[kind].set(labels[0])
+                            self.ebay_policy_ids[kind] = entries[0]['id']
+                    status_var.set(trans['ebay_ready'])
+
+                self.root.after(0, apply)
+
+            in_thread(run)
+
+        def on_policy_selected(kind):
+            entries = self._ebay_policy_entries.get(kind, [])
+            index = policy_options[kind].current()
+            if 0 <= index < len(entries):
+                self.ebay_policy_ids[kind] = entries[index]['id']
+
+        for kind, combo in policy_options.items():
+            combo.bind(
+                '<<ComboboxSelected>>',
+                lambda event, name=kind: on_policy_selected(name),
+            )
+        ttk.Button(
+            policies, text=trans['ebay_policies_load'], command=load_policies
+        ).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(6, 0))
+
+        # --- 3. Angebot -------------------------------------------------
+        offer = ttk.LabelFrame(
+            outer, text=trans['ebay_offer_frame'], padding=8
+        )
+        offer.pack(fill=tk.X, pady=(10, 0))
+        quantity_row = ttk.Frame(offer)
+        quantity_row.pack(fill=tk.X)
+        ttk.Label(quantity_row, text=trans['ebay_quantity']).pack(side=tk.LEFT)
+        ttk.Spinbox(
+            quantity_row, from_=1, to=99, width=5,
+            textvariable=self.ebay_quantity_var,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+
+        ttk.Label(
+            outer, textvariable=status_var, wraplength=540,
+            justify=tk.LEFT, foreground='#555555',
+        ).pack(fill=tk.X, pady=(10, 0))
+
+        def check():
+            draft = self.ebay_draft()
+            if not draft.category_id:
+                status_var.set(trans['ebay_no_category'])
+                return None
+            missing = [
+                name for name in draft.missing_fields() if name != 'images'
+            ]
+            if not self.own_images:
+                missing.append('images')
+            status_var.set(
+                f"{trans['ebay_publish_missing']} {', '.join(missing)}"
+                if missing else trans['ebay_ready']
+            )
+            return draft if not missing else None
+
+        def publish():
+            draft = check()
+            if draft is None:
+                return
+            variant = self.selected_variant or {}
+            if not messagebox.askyesno(
+                trans['ebay_publish_title'],
+                trans['ebay_confirm'].format(
+                    title=draft.title,
+                    price=draft.price,
+                    category=variant.get('ebay_category_name', draft.category_id),
+                    images=len(self.own_images),
+                    environment=self.ebay_environment,
+                ),
+                default=messagebox.NO,
+                icon=messagebox.WARNING,
+            ):
+                return
+            photos = [
+                image['path'] for image in self.own_images
+                if Path(image['path']).is_file()
+            ]
+            address = {
+                'postalCode': postal_var.get().strip(),
+                'country': country_var.get().strip().upper() or 'DE',
+            }
+            self.ebay_postal_code = address['postalCode']
+            self.ebay_country = address['country']
+            self.save_config()
+            report(trans['ebay_working'])
+
+            def run():
+                try:
+                    client = self.ebay_client()
+                    draft.image_urls = [
+                        client.upload_picture(path) for path in photos
+                    ]
+                    client.ensure_location(
+                        draft.merchant_location_key, address
+                    )
+                    client.create_inventory_item(draft)
+                    offer_id = client.create_offer(draft)
+                    listing_id = client.publish_offer(offer_id)
+                except Exception as error:
+                    self.audit_security_event('ebay_publish', 'ebay', 'failed')
+                    report(str(error))
+                    return
+                self.audit_security_event('ebay_publish', 'ebay')
+                report(f"{trans['ebay_published']} {listing_id}")
+
+            in_thread(run)
+
+        buttons = ttk.Frame(outer)
+        buttons.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(
+            buttons, text=trans['ebay_check'], command=check
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            buttons, text=trans['ebay_publish_action'], command=publish
+        ).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(
+            buttons, text=trans['dialog_close'], command=window.destroy
+        ).pack(side=tk.RIGHT)
+
     def copy_listing(self):
         """Kopiert den vollständigen Beitrag inklusive Pflichttext."""
         trans = TRANSLATIONS[self.language]
@@ -5812,6 +6237,14 @@ class TabbedProductGeneratorGUI:
             ),
         )
         self.package_button.pack(side=tk.LEFT, padx=(6, 0))
+        self.ebay_publish_button = ttk.Button(
+            toolbar,
+            text=TRANSLATIONS['de']['ebay_publish'],
+            command=lambda: self.run_on_active(
+                ProductGeneratorGUI.open_ebay_publisher
+            ),
+        )
+        self.ebay_publish_button.pack(side=tk.LEFT, padx=(6, 0))
 
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
@@ -5857,6 +6290,7 @@ class TabbedProductGeneratorGUI:
         self.export_button.config(text=trans['export_button'])
         self.copy_button.config(text=trans['copy_button'])
         self.package_button.config(text=trans['export_package'])
+        self.ebay_publish_button.config(text=trans['ebay_publish'])
         self.file_menu.entryconfig(0, label=trans['menu_new'])
         self.file_menu.entryconfig(1, label=trans['menu_open'])
         self.file_menu.entryconfig(2, label=trans['menu_save'])
