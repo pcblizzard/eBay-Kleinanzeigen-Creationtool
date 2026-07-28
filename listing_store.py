@@ -508,9 +508,82 @@ class ListingStore:
         return json.loads(row["payload_json"])
 
     @synchronized
+    def add_image(
+        self, product_id: str, path, source_url: str = "", is_own: bool = True
+    ) -> int:
+        """Merkt sich ein Bild als Dateipfad; Inhalte bleiben ausserhalb."""
+        file_path = Path(path)
+        checksum = ""
+        if file_path.is_file():
+            digest = hashlib.sha256()
+            with open(file_path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1 << 20), b""):
+                    digest.update(chunk)
+            checksum = digest.hexdigest()
+        existing = self.connection.execute(
+            """
+            SELECT id FROM images
+            WHERE product_id=? AND (path=? OR (checksum<>'' AND checksum=?))
+            """,
+            (product_id, str(file_path), checksum),
+        ).fetchone()
+        if existing:
+            return int(existing["id"])
+        position = self.connection.execute(
+            "SELECT COALESCE(MAX(position), 0) + 1 FROM images WHERE product_id=?",
+            (product_id,),
+        ).fetchone()[0]
+        cursor = self.connection.execute(
+            """
+            INSERT INTO images(
+                product_id, path, source_url, checksum, position, is_own
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                product_id, str(file_path), source_url, checksum,
+                position, 1 if is_own else 0,
+            ),
+        )
+        self.connection.commit()
+        return int(cursor.lastrowid)
+
+    @synchronized
+    def images(self, product_id: str, own_only: bool = False) -> list[dict]:
+        rows = self.connection.execute(
+            f"""
+            SELECT id, path, source_url, checksum, position, is_own
+            FROM images WHERE product_id=?
+            {'AND is_own=1' if own_only else ''}
+            ORDER BY position, id
+            """,
+            (product_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    @synchronized
+    def remove_image(self, image_id: int):
+        self.connection.execute("DELETE FROM images WHERE id=?", (image_id,))
+        self.connection.commit()
+
+    @synchronized
+    def reorder_images(self, image_ids):
+        """Schreibt die Anzeigereihenfolge; das erste Bild ist das Hauptbild."""
+        with self.connection:
+            for position, image_id in enumerate(image_ids, 1):
+                self.connection.execute(
+                    "UPDATE images SET position=? WHERE id=?",
+                    (position, int(image_id)),
+                )
+
+    @synchronized
     def export_package(
-        self, product_id: str, output_root, images=()
+        self, product_id: str, output_root, images=(), prepare=None
     ) -> Path:
+        """Schreibt Texte, Nachweise und Bilder in einen Produktordner.
+
+        ``prepare(source, target)`` bereitet eigene Fotos auf; ohne Angabe
+        werden sie unveraendert kopiert.
+        """
         product = self.connection.execute(
             "SELECT * FROM products WHERE id=?", (product_id,)
         ).fetchone()
@@ -556,12 +629,21 @@ class ListingStore:
         )
         for index, image_path in enumerate(images, 1):
             source = Path(image_path)
-            if source.is_file():
-                target = folder / (
-                    f"{index:02d}-hauptbild{source.suffix.lower()}"
-                    if index == 1
-                    else f"{index:02d}-produktbild{source.suffix.lower()}"
-                )
-                if source.resolve() != target.resolve():
-                    shutil.copy2(source, target)
+            if not source.is_file():
+                continue
+            suffix = source.suffix.lower()
+            if prepare is not None and suffix not in ('.gif',):
+                # Aufbereitete Fotos werden als JPEG abgelegt; animierte GIFs
+                # blieben dabei auf der Strecke und werden nur kopiert.
+                suffix = '.jpg' if suffix not in ('.png', '.webp') else suffix
+            target = folder / (
+                f"{index:02d}-hauptbild{suffix}" if index == 1
+                else f"{index:02d}-produktbild{suffix}"
+            )
+            if source.resolve() == target.resolve():
+                continue
+            if prepare is None:
+                shutil.copy2(source, target)
+            else:
+                prepare(source, target)
         return folder

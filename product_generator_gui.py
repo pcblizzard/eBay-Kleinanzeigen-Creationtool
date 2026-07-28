@@ -10,6 +10,7 @@ import io
 import hashlib
 import locale
 import os
+import shutil
 import sys
 import base64
 from pathlib import Path
@@ -34,9 +35,10 @@ import xml.etree.ElementTree as ET
 from listing_store import ListingStore, PLATFORM_PROFILES, safe_filename
 
 try:
-    from PIL import Image, ImageTk
+    from PIL import Image, ImageOps, ImageTk
 except ImportError:
     Image = None
+    ImageOps = None
     ImageTk = None
 
 # Konstante für die Gewährleistungsklausel
@@ -45,11 +47,57 @@ WARRANTY_CLAUSE = """Privatverkauf. Die Ware wird unter Ausschluss der Sachmäng
 MODULE_DIR = Path(__file__).resolve().parent
 APPLICATION_NAME = "eBay-Kleinanzeigen-Creationtool"
 
+# Eigene Fotos: Grenzen der Plattformen und Vorgaben fuer die Aufbereitung.
+OWN_IMAGE_SUFFIXES = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif',
+                      '.tiff', '.heic', '.heif')
+PLATFORM_IMAGE_LIMITS = {
+    'kleinanzeigen': 20,
+    'ebay': 24,
+    'ebay_detailed': 24,
+    'ebay_mobile': 24,
+}
+OWN_IMAGE_MAX_EDGE = 2000
+OWN_IMAGE_MAX_BYTES = 12 * 1024 * 1024
+OWN_IMAGE_QUALITY = 88
+
 
 def user_data_dir():
     """Benutzerbezogenes Datenverzeichnis der Anwendung."""
     root = os.environ.get('LOCALAPPDATA') or (Path.home() / '.local' / 'share')
     return Path(root) / APPLICATION_NAME
+
+
+def prepare_own_image(source_path, target_path, max_edge=OWN_IMAGE_MAX_EDGE):
+    """Bereitet ein eigenes Foto fuer den Upload auf.
+
+    Entfernt saemtliche EXIF-Daten, dreht das Bild nach seiner
+    Orientierungsangabe und verkleinert es auf eine vertretbare Kantenlaenge.
+
+    Das Entfernen der EXIF-Daten ist der wichtigste Schritt: Handyfotos
+    enthalten GPS-Koordinaten. Wer den Artikel zu Hause fotografiert,
+    veroeffentlicht sonst mit dem Bild seine Wohnadresse.
+    """
+    if Image is None:
+        # Ohne Pillow wird unveraendert kopiert; der Aufrufer warnt davor.
+        shutil.copy2(source_path, target_path)
+        return False
+    with Image.open(source_path) as opened:
+        image = ImageOps.exif_transpose(opened)
+        target = Path(target_path)
+        if target.suffix.lower() in ('.jpg', '.jpeg') and image.mode not in (
+            'RGB', 'L'
+        ):
+            image = image.convert('RGB')
+        if max_edge and max(image.size) > max_edge:
+            image.thumbnail((max_edge, max_edge), Image.LANCZOS)
+        # Ein frisches Bild ohne info-Dictionary traegt keine Metadaten mehr.
+        clean = Image.new(image.mode, image.size)
+        clean.putdata(list(image.getdata()))
+        if target.suffix.lower() in ('.jpg', '.jpeg'):
+            clean.save(target, quality=OWN_IMAGE_QUALITY, optimize=True)
+        else:
+            clean.save(target)
+    return True
 
 
 def default_products_file():
@@ -97,6 +145,23 @@ TRANSLATIONS = {
         "previous_image": "◀",
         "next_image": "▶",
         "save_image": "Bild speichern…",
+        "own_images_frame": "Eigene Fotos",
+        "add_own_images": "Hinzufügen…",
+        "own_images_title": "Eigene Produktfotos auswählen",
+        "own_images_count": "{count} von {limit} Fotos ({platform})",
+        "own_images_limit": "Grenze erreicht: {platform} erlaubt {limit} Fotos.",
+        "own_images_hint": (
+            "Beim Export werden Standortdaten (GPS) entfernt, die Drehung "
+            "korrigiert und die Größe angepasst. Der Upload erfolgt weiterhin "
+            "von Hand auf der jeweiligen Plattform."
+        ),
+        "own_images_no_pillow": (
+            "Pillow fehlt: Fotos werden unverändert kopiert, "
+            "einschließlich ihrer Standortdaten."
+        ),
+        "own_images_replace_note": (
+            "Eigene Fotos ersetzen im Export die Herstellerbilder."
+        ),
         "save_image_title": "Produktbild speichern",
         "image_saved": "Produktbild gespeichert:",
         "legal_frame": "Fester Hinweis (wird immer angehängt)",
@@ -252,6 +317,23 @@ TRANSLATIONS = {
         "previous_image": "◀",
         "next_image": "▶",
         "save_image": "Save image…",
+        "own_images_frame": "Own photos",
+        "add_own_images": "Add…",
+        "own_images_title": "Select your own product photos",
+        "own_images_count": "{count} of {limit} photos ({platform})",
+        "own_images_limit": "Limit reached: {platform} allows {limit} photos.",
+        "own_images_hint": (
+            "On export, location data (GPS) is removed, rotation is corrected "
+            "and the size is adjusted. Uploading still happens manually on "
+            "the platform itself."
+        ),
+        "own_images_no_pillow": (
+            "Pillow is missing: photos are copied unchanged, "
+            "including their location data."
+        ),
+        "own_images_replace_note": (
+            "Own photos replace the manufacturer images in the export."
+        ),
         "save_image_title": "Save product image",
         "image_saved": "Product image saved:",
         "legal_frame": "Mandatory notice (always appended)",
@@ -1370,11 +1452,56 @@ class ProductGeneratorGUI:
             state=tk.DISABLED,
         )
         self.save_image_button.pack(fill=tk.X, padx=6, pady=(0, 6))
+        # Eigene Fotos: bei Kleinanzeigen und eBay laedt man sie selbst hoch,
+        # das Werkzeug bereitet sie nur vollstaendig vor.
+        self.own_images_frame = ttk.LabelFrame(
+            self.cover_panel, text=trans['own_images_frame'], padding=4
+        )
+        self.own_images_list = tk.Listbox(
+            self.own_images_frame, height=4, exportselection=False,
+            activestyle='none',
+        )
+        self.own_images_list.pack(fill=tk.BOTH, expand=True)
+        self.own_images_list.bind(
+            '<<ListboxSelect>>', self.on_own_image_selected
+        )
+        own_image_buttons = ttk.Frame(self.own_images_frame)
+        own_image_buttons.pack(fill=tk.X, pady=(4, 0))
+        self.add_own_images_button = ttk.Button(
+            own_image_buttons, text=trans['add_own_images'],
+            command=self.add_own_images,
+        )
+        self.add_own_images_button.pack(side=tk.LEFT)
+        self.move_own_image_up_button = ttk.Button(
+            own_image_buttons, text='▲', width=3,
+            command=lambda: self.move_own_image(-1),
+        )
+        self.move_own_image_up_button.pack(side=tk.LEFT, padx=(4, 0))
+        self.move_own_image_down_button = ttk.Button(
+            own_image_buttons, text='▼', width=3,
+            command=lambda: self.move_own_image(1),
+        )
+        self.move_own_image_down_button.pack(side=tk.LEFT, padx=(2, 0))
+        self.remove_own_image_button = ttk.Button(
+            own_image_buttons, text='✕', width=3,
+            command=self.remove_own_image,
+        )
+        self.remove_own_image_button.pack(side=tk.LEFT, padx=(2, 0))
+        self.own_images_hint_var = tk.StringVar()
+        ttk.Label(
+            self.own_images_frame, textvariable=self.own_images_hint_var,
+            foreground='#555555', wraplength=220, justify=tk.LEFT,
+        ).pack(fill=tk.X, pady=(4, 0))
+        self.own_images = []
+
         # Die Bedienelemente werden zuerst vom unteren Rand reserviert.
         # Dadurch kann ein großes Bild sie in kleinen Fenstern nicht verdrängen.
         self.product_image_label.pack_forget()
         self.image_controls.pack_forget()
         self.save_image_button.pack_forget()
+        self.own_images_frame.pack(
+            side=tk.BOTTOM, fill=tk.X, padx=6, pady=(0, 6)
+        )
         self.save_image_button.pack(
             side=tk.BOTTOM, fill=tk.X, padx=6, pady=(0, 6)
         )
@@ -1889,6 +2016,7 @@ class ProductGeneratorGUI:
         self.update_listing_counters()
         self.update_price_summary()
         self.update_listing_completeness()
+        self.refresh_own_images()
 
     def strip_generated_legal(self, text):
         marker = '\n\n---\n\n' + self.legal_clause
@@ -1953,6 +2081,8 @@ class ProductGeneratorGUI:
         self.save_visible_platform_draft()
         self.current_platform = wanted
         self.load_platform_draft(wanted)
+        # Die Bildgrenze haengt an der Plattform.
+        self.refresh_own_images()
 
     def save_visible_platform_draft(self):
         if (
@@ -2829,6 +2959,128 @@ class ProductGeneratorGUI:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def own_image_limit(self):
+        """Bildgrenze der aktuell bearbeiteten Plattform."""
+        return PLATFORM_IMAGE_LIMITS.get(self.current_platform, 20)
+
+    def refresh_own_images(self):
+        """Liest die eigenen Fotos aus der Produktakte in die Liste."""
+        if not hasattr(self, 'own_images_list'):
+            return
+        trans = TRANSLATIONS[self.language]
+        self.own_images = (
+            self.listing_store.images(self.product_record_id, own_only=True)
+            if self.product_record_id else []
+        )
+        selection = self.own_images_list.curselection()
+        self.own_images_list.delete(0, tk.END)
+        for position, image in enumerate(self.own_images, 1):
+            name = Path(image['path']).name
+            missing = '' if Path(image['path']).is_file() else ' ⚠'
+            self.own_images_list.insert(tk.END, f"{position:02d}  {name}{missing}")
+        if selection and selection[0] < len(self.own_images):
+            self.own_images_list.selection_set(selection[0])
+        limit = self.own_image_limit()
+        hint = [
+            trans['own_images_count'].format(
+                count=len(self.own_images), limit=limit,
+                platform=PLATFORM_PROFILES[self.current_platform].label_de,
+            )
+        ]
+        if self.own_images:
+            hint.append(trans['own_images_replace_note'])
+        hint.append(
+            trans['own_images_hint'] if Image is not None
+            else trans['own_images_no_pillow']
+        )
+        self.own_images_hint_var.set(' '.join(hint))
+
+    def on_own_image_selected(self, event=None):
+        """Zeigt das ausgewählte eigene Foto in der Cover-Spalte."""
+        selection = self.own_images_list.curselection()
+        if not selection or selection[0] >= len(self.own_images):
+            return
+        path = Path(self.own_images[selection[0]]['path'])
+        if not path.is_file() or Image is None:
+            return
+        try:
+            with Image.open(path) as opened:
+                image = ImageOps.exif_transpose(opened).copy()
+        except Exception:
+            return
+        self._image_generation += 1
+        self._product_image_original = image
+        self._product_image_current_url = ''
+        self.render_responsive_cover()
+
+    def add_own_images(self):
+        """Übernimmt eigene Fotos als Dateipfade in die Produktakte."""
+        trans = TRANSLATIONS[self.language]
+        if not self.product_record_id:
+            messagebox.showwarning(
+                trans['no_selection'], trans['no_selection']
+            )
+            return
+        limit = self.own_image_limit()
+        if len(self.own_images) >= limit:
+            messagebox.showwarning(
+                trans['own_images_frame'],
+                trans['own_images_limit'].format(
+                    limit=limit,
+                    platform=PLATFORM_PROFILES[self.current_platform].label_de,
+                ),
+            )
+            return
+        patterns = ' '.join(f'*{suffix}' for suffix in OWN_IMAGE_SUFFIXES)
+        selected = filedialog.askopenfilenames(
+            title=trans['own_images_title'],
+            initialdir=self.save_path,
+            filetypes=[
+                (trans['own_images_frame'], patterns),
+                ("Alle Dateien", "*.*"),
+            ],
+        )
+        free_slots = limit - len(self.own_images)
+        for path in list(selected)[:free_slots]:
+            self.listing_store.add_image(
+                self.product_record_id, path, is_own=True
+            )
+        if len(selected) > free_slots:
+            messagebox.showwarning(
+                trans['own_images_frame'],
+                trans['own_images_limit'].format(
+                    limit=limit,
+                    platform=PLATFORM_PROFILES[self.current_platform].label_de,
+                ),
+            )
+        self.refresh_own_images()
+
+    def move_own_image(self, offset):
+        """Verschiebt ein Foto; das erste ist das Hauptbild."""
+        selection = self.own_images_list.curselection()
+        if not selection:
+            return
+        index = selection[0]
+        target = index + offset
+        if not (0 <= index < len(self.own_images)) or not (
+            0 <= target < len(self.own_images)
+        ):
+            return
+        order = [image['id'] for image in self.own_images]
+        order[index], order[target] = order[target], order[index]
+        self.listing_store.reorder_images(order)
+        self.refresh_own_images()
+        self.own_images_list.selection_clear(0, tk.END)
+        self.own_images_list.selection_set(target)
+
+    def remove_own_image(self):
+        """Entfernt nur den Verweis, niemals die Originaldatei."""
+        selection = self.own_images_list.curselection()
+        if not selection or selection[0] >= len(self.own_images):
+            return
+        self.listing_store.remove_image(self.own_images[selection[0]]['id'])
+        self.refresh_own_images()
+
     def save_current_product_image(self):
         url = self._product_image_current_url
         if not url:
@@ -3208,6 +3460,9 @@ class ProductGeneratorGUI:
         self.previous_image_button.config(text=trans['previous_image'])
         self.next_image_button.config(text=trans['next_image'])
         self.save_image_button.config(text=trans['save_image'])
+        self.own_images_frame.config(text=trans['own_images_frame'])
+        self.add_own_images_button.config(text=trans['add_own_images'])
+        self.refresh_own_images()
         self.legal_frame.config(text=trans['legal_frame'])
         self.provider_frame.config(text=trans['provider_frame'])
         for button, label_key in self.provider_buttons.values():
@@ -5409,13 +5664,23 @@ class ProductGeneratorGUI:
         if not output_root:
             return
         product_id = self.product_record_id
-        image_urls = list(self.selected_variant.get('image_urls') or [])
+        own_paths = [
+            image['path'] for image in self.own_images
+            if Path(image['path']).is_file()
+        ]
+        # Eigene Fotos schlagen die Herstellerbilder: wer selbst fotografiert
+        # hat, will die Werbebilder nicht im Ordner haben.
+        image_urls = (
+            [] if own_paths
+            else list(self.selected_variant.get('image_urls') or [])
+        )
 
         def worker():
             failed_images = 0
             try:
                 folder = self.listing_store.export_package(
-                    product_id, output_root
+                    product_id, output_root, images=own_paths,
+                    prepare=prepare_own_image,
                 )
                 for index, url in enumerate(image_urls, 1):
                     try:

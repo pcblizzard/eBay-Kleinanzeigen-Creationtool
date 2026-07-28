@@ -7,12 +7,17 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from pathlib import Path
 
+from PIL import Image
+from PIL.TiffImagePlugin import IFDRational
+
 from product_generator_gui import (
+    OWN_IMAGE_MAX_EDGE,
     ProductGenerator,
     ProductGeneratorGUI,
     SECRET_PLACEHOLDER,
     WARRANTY_CLAUSE,
     default_products_file,
+    prepare_own_image,
 )
 from listing_store import (
     ListingStore,
@@ -120,6 +125,82 @@ class ProductGeneratorTests(unittest.TestCase):
             self.assistant('en', 'Negotiable').assistant_price_text(1234.5),
             "1,234.50 € Negotiable",
         )
+
+    def photo_with_location(self, path, size=(3000, 2000), colour=(200, 30, 30)):
+        """Erzeugt ein Foto mit GPS-Daten und gedrehter Orientierung."""
+        image = Image.new("RGB", size, colour)
+        exif = image.getexif()
+        exif[274] = 6                       # Orientierung: 90 Grad
+        exif[271] = "TestPhone"             # Kamerahersteller
+        gps = exif.get_ifd(0x8825)
+        gps[1] = 'N'
+        gps[2] = tuple(IFDRational(value) for value in (52, 31, 12))
+        image.save(path, exif=exif)
+        return path
+
+    def test_prepared_photos_lose_their_location_data(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = self.photo_with_location(Path(folder) / "IMG_0001.jpg")
+            target = Path(folder) / "01-hauptbild.jpg"
+            self.assertTrue(prepare_own_image(source, target))
+            with Image.open(target) as prepared:
+                exif = prepared.getexif()
+                # Standortdaten wuerden sonst die Wohnadresse verraten.
+                self.assertFalse(exif.get_ifd(0x8825))
+                self.assertIsNone(exif.get(271))
+                self.assertIsNone(exif.get(274))
+                # Orientierung angewandt, Kantenlaenge begrenzt.
+                self.assertEqual(max(prepared.size), OWN_IMAGE_MAX_EDGE)
+                self.assertGreater(prepared.height, prepared.width)
+
+    def test_own_photos_keep_their_order_in_the_export(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            store = ListingStore(root / "listings.db")
+            try:
+                product_id = store.upsert_product("Testprodukt", "1")
+                store.save_draft(product_id, "kleinanzeigen", "Titel", "Text")
+                paths = [
+                    self.photo_with_location(
+                        root / f"IMG_{n}.jpg", colour=(40 * n, 30, 200)
+                    )
+                    for n in range(1, 4)
+                ]
+                ids = [store.add_image(product_id, path) for path in paths]
+                # Dasselbe Foto zweimal ergibt keinen zweiten Eintrag.
+                self.assertEqual(store.add_image(product_id, paths[0]), ids[0])
+                self.assertEqual(len(store.images(product_id, True)), 3)
+                # Das dritte Foto wird zum Hauptbild.
+                store.reorder_images([ids[2], ids[0], ids[1]])
+                ordered = [
+                    Path(image['path']).name
+                    for image in store.images(product_id, own_only=True)
+                ]
+                self.assertEqual(
+                    ordered, ["IMG_3.jpg", "IMG_1.jpg", "IMG_2.jpg"]
+                )
+                exported = store.export_package(
+                    product_id, root / "export",
+                    images=[
+                        image['path']
+                        for image in store.images(product_id, own_only=True)
+                    ],
+                    prepare=prepare_own_image,
+                )
+                names = sorted(
+                    item.name for item in exported.iterdir() if item.is_file()
+                )
+                self.assertIn("01-hauptbild.jpg", names)
+                self.assertIn("02-produktbild.jpg", names)
+                self.assertIn("03-produktbild.jpg", names)
+                with Image.open(exported / "01-hauptbild.jpg") as main:
+                    self.assertFalse(main.getexif().get_ifd(0x8825))
+                store.remove_image(ids[0])
+                self.assertEqual(len(store.images(product_id, True)), 2)
+                # Die Originaldatei bleibt unangetastet.
+                self.assertTrue(paths[0].is_file())
+            finally:
+                store.close()
 
     def test_menubar_entries_start_at_index_zero(self):
         """Ein Tearoff-Eintrag wuerde alle Menue-Indizes verschieben.
