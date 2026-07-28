@@ -1,3 +1,5 @@
+import inspect
+import re
 import json
 import tempfile
 import tkinter as tk
@@ -11,6 +13,7 @@ from PIL import Image
 from PIL.TiffImagePlugin import IFDRational
 
 from product_generator_gui import (
+    TabbedProductGeneratorGUI,
     OWN_IMAGE_MAX_EDGE,
     ProductGenerator,
     ProductGeneratorGUI,
@@ -218,6 +221,28 @@ class ProductGeneratorTests(unittest.TestCase):
                 self.assertTrue(paths[0].is_file())
             finally:
                 store.close()
+
+    def test_deleting_credentials_covers_every_stored_secret(self):
+        """Jedes gespeicherte Geheimnis muss auch loeschbar sein.
+
+        Der eBay-Erneuerungstoken kam spaeter dazu und fehlte zunaechst in der
+        Loeschung - der Zugriff auf das Konto waere sonst geblieben.
+        """
+        source = inspect.getsource(
+            TabbedProductGeneratorGUI._delete_marketplace_credentials
+        )
+        gui_source = Path("product_generator_gui.py").read_text(
+            encoding="utf-8"
+        )
+        stored = set(re.findall(r"set_secret\(\s*'([a-z_]+)'", gui_source))
+        stored |= set(re.findall(r"get_secret\('([a-z_]+)'\)", gui_source))
+        # Namen, die nur gelesen werden, weil sie aus Umgebungsvariablen
+        # stammen koennen, zaehlen ebenfalls.
+        for name in sorted(stored):
+            self.assertIn(
+                name, source,
+                f"{name} wird gespeichert, aber nicht geloescht",
+            )
 
     def test_menubar_entries_start_at_index_zero(self):
         """Ein Tearoff-Eintrag wuerde alle Menue-Indizes verschieben.

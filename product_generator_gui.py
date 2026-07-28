@@ -183,6 +183,15 @@ TRANSLATIONS = {
         "ebay_consent_paste": "Adresse nach der Zustimmung hier einfügen:",
         "ebay_consent_save": "Einwilligung speichern",
         "ebay_consent_saved": "Einwilligung gespeichert.",
+        "ebay_consent_revoke": "Einwilligung löschen",
+        "ebay_consent_revoked": "Einwilligung gelöscht.",
+        "ebay_consent_revoke_confirm": (
+            "Die gespeicherte eBay-Anmeldung wirklich löschen?\n\n"
+            "Client-ID und Client-Secret bleiben erhalten; für ein neues "
+            "Angebot muss der Zugriff erneut erteilt werden.\n\n"
+            "Der Zugriff lässt sich zusätzlich im eBay-Konto unter "
+            "„Kontoeinstellungen → Anwendungen“ dauerhaft widerrufen."
+        ),
         "ebay_consent_hint": (
             "Der Browser öffnet die eBay-Seite. Nach dem Zustimmen leitet eBay "
             "auf deine RuName-Adresse weiter — kopiere die vollständige Adresse "
@@ -400,6 +409,15 @@ TRANSLATIONS = {
         "ebay_consent_paste": "Paste the address after consenting:",
         "ebay_consent_save": "Save consent",
         "ebay_consent_saved": "Consent saved.",
+        "ebay_consent_revoke": "Delete consent",
+        "ebay_consent_revoked": "Consent deleted.",
+        "ebay_consent_revoke_confirm": (
+            "Really delete the stored eBay sign-in?\n\n"
+            "Client ID and client secret are kept; listing again requires "
+            "granting access once more.\n\n"
+            "You can also revoke access permanently in your eBay account "
+            "under “Account settings → Applications”."
+        ),
         "ebay_consent_hint": (
             "The browser opens the eBay page. After you consent, eBay "
             "redirects to your RuName address — copy the complete address "
@@ -5971,9 +5989,35 @@ class ProductGeneratorGUI:
 
             in_thread(run)
 
+        consent_buttons = ttk.Frame(consent)
+        consent_buttons.pack(fill=tk.X, pady=(6, 0))
         ttk.Button(
-            consent, text=trans['ebay_consent_save'], command=save_consent
-        ).pack(anchor=tk.W, pady=(6, 0))
+            consent_buttons, text=trans['ebay_consent_save'],
+            command=save_consent,
+        ).pack(side=tk.LEFT)
+
+        def revoke_consent():
+            """Entfernt nur die Anmeldung, nicht die API-Zugangsdaten."""
+            if not messagebox.askyesno(
+                trans['ebay_publish_title'],
+                trans['ebay_consent_revoke_confirm'],
+                parent=window,
+                default=messagebox.NO,
+            ):
+                return
+            try:
+                self.delete_secret('ebay_refresh_token')
+                self.audit_security_event('ebay_consent_deleted', 'ebay')
+            except Exception as error:
+                report(str(error))
+                return
+            consent_state.set(trans['ebay_consent_missing'])
+            status_var.set(trans['ebay_consent_revoked'])
+
+        ttk.Button(
+            consent_buttons, text=trans['ebay_consent_revoke'],
+            command=revoke_consent,
+        ).pack(side=tk.LEFT, padx=(6, 0))
 
         # --- 2. Richtlinien und Standort -------------------------------
         policies = ttk.LabelFrame(
@@ -6692,6 +6736,9 @@ class TabbedProductGeneratorGUI:
             for name in (
                 'kleinanzeigen_api_key', 'ebay_client_id',
                 'ebay_client_secret',
+                # Die erteilte Einwilligung gehoert mit geloescht, sonst
+                # bliebe der Zugriff auf das eBay-Konto bestehen.
+                'ebay_refresh_token',
             ):
                 controller.delete_secret(name)
             controller._ebay_access_token = None
