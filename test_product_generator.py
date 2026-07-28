@@ -1824,9 +1824,17 @@ class ListingManagerTests(unittest.TestCase):
                 self.assertEqual(eintraege[erster]['draft_count'], 2)
                 self.assertEqual(eintraege[erster]['fact_count'], 1)
                 self.assertEqual(eintraege[erster]['own_image_count'], 0)
-                # Zuletzt geaenderter Beitrag zuerst.
+                # Zuletzt geaenderter Beitrag zuerst. Der Zeitstempel hat
+                # Sekundengenauigkeit, deshalb wird er ausdruecklich gesetzt
+                # statt auf die Ausfuehrungsdauer zu bauen.
+                store.connection.execute(
+                    "UPDATE products SET updated_at=? WHERE id=?",
+                    (2_000_000_000, erster),
+                )
+                store.connection.commit()
                 self.assertEqual(
-                    [e['name'] for e in store.products()][0], "Marantz M-CR612"
+                    [e['name'] for e in store.products()][0],
+                    "Fantec QB-X2US3R",
                 )
             finally:
                 store.close()

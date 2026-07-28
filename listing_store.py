@@ -535,7 +535,10 @@ class ListingStore:
                    (SELECT COUNT(*) FROM images i WHERE i.product_id = p.id
                         AND i.is_own = 1) AS own_image_count
             FROM products p
-            ORDER BY p.updated_at DESC
+            -- Der Zeitstempel hat Sekundengenauigkeit; ohne zweites
+            -- Merkmal waere die Reihenfolge gleichzeitig angelegter
+            -- Beitraege von Aufruf zu Aufruf verschieden.
+            ORDER BY p.updated_at DESC, p.name COLLATE NOCASE
             """
         ).fetchall()
         return [dict(row) for row in rows]
