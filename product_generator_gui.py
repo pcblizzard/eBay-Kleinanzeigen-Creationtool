@@ -335,11 +335,13 @@ TRANSLATIONS = {
         "own_images_title": "Eigene Produktfotos auswählen",
         "own_images_count": "{count} von {limit} Fotos ({platform})",
         "own_images_limit": "Grenze erreicht: {platform} erlaubt {limit} Fotos.",
+        # Kurz gehalten: der Text stand dauerhaft in der Bildspalte und nahm
+        # dem Vorschaubild acht Zeilen Hoehe weg.
         "own_images_hint": (
-            "Beim Export werden Standortdaten (GPS) entfernt, die Drehung "
-            "korrigiert und die Größe angepasst. Der Upload erfolgt weiterhin "
-            "von Hand auf der jeweiligen Plattform."
+            "Export: ohne GPS-Daten, gedreht, verkleinert. "
+            "Hochladen von Hand."
         ),
+        "product_image_window": "Produktbild (Klick oder Esc schließt)",
         "own_images_no_pillow": (
             "Pillow fehlt: Fotos werden unverändert kopiert, "
             "einschließlich ihrer Standortdaten."
@@ -596,10 +598,9 @@ TRANSLATIONS = {
         "own_images_count": "{count} of {limit} photos ({platform})",
         "own_images_limit": "Limit reached: {platform} allows {limit} photos.",
         "own_images_hint": (
-            "On export, location data (GPS) is removed, rotation is corrected "
-            "and the size is adjusted. Uploading still happens manually on "
-            "the platform itself."
+            "Export: no GPS data, rotated, resized. Upload by hand."
         ),
+        "product_image_window": "Product image (click or Esc to close)",
         "own_images_no_pillow": (
             "Pillow is missing: photos are copied unchanged, "
             "including their location data."
@@ -1860,7 +1861,7 @@ class ProductGeneratorGUI:
             self.cover_panel, text=trans['own_images_frame'], padding=4
         )
         self.own_images_list = tk.Listbox(
-            self.own_images_frame, height=4, exportselection=False,
+            self.own_images_frame, height=3, exportselection=False,
             activestyle='none',
         )
         self.own_images_list.pack(fill=tk.BOTH, expand=True)
@@ -1921,6 +1922,10 @@ class ProductGeneratorGUI:
         self._cover_resize_after_id = None
         self._image_generation = 0
         self.cover_panel.bind('<Configure>', self.on_cover_panel_resized)
+        # Die Spalte bleibt zwangslaeufig schmal. Wer das Bild wirklich
+        # beurteilen will, oeffnet es per Klick in voller Groesse.
+        self.product_image_label.bind('<Button-1>', self.open_image_window)
+        self.product_image_label.configure(cursor='hand2')
 
         rendered_scrollbar = ttk.Scrollbar(self.rendered_text_panel)
         rendered_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -3800,30 +3805,19 @@ class ProductGeneratorGUI:
     def cover_space(self):
         """Der Platz, der dem Vorschaubild tatsaechlich zur Verfuegung steht.
 
-        Gemessen wird die Spalte abzueglich der Bedienelemente darunter -
-        nicht das Bildfeld selbst. Dessen Hoehe richtet sich naemlich nach
-        dem Bild, das darin liegt: ein kleines Bild ergab ein niedriges
-        Feld, das Feld begrenzte die naechste Skalierung, und das Bild blieb
-        dauerhaft winzig.
+        Das Bildfeld bekommt den Rest der Spalte, nachdem die Bedienelemente
+        am unteren Rand ihren Platz reserviert haben. Genau dieser Rest ist
+        die Obergrenze: Wird das Bild groesser gerechnet, schneidet Tk es ab,
+        und man sieht nur einen Ausschnitt.
 
-        Gibt ``None`` zurueck, solange das Fenster noch nicht vermessen ist.
+        Gibt ``None`` zurueck, solange das Fenster noch nicht vermessen ist -
+        ein Notwert wuerde sich sonst als endgueltige Bildgroesse festsetzen.
         """
-        panel_width = self.cover_panel.winfo_width()
-        panel_height = self.cover_panel.winfo_height()
-        if panel_width <= 1 or panel_height <= 1:
+        width = self.product_image_label.winfo_width()
+        height = self.product_image_label.winfo_height()
+        if width <= 1 or height <= 1:
             return None
-        below = sum(
-            widget.winfo_reqheight() + 6
-            for widget in (
-                getattr(self, name, None) for name in
-                ('image_controls', 'save_image_button', 'own_images_frame')
-            )
-            if widget is not None and widget.winfo_manager()
-        )
-        return (
-            max(80, panel_width - 16),
-            max(120, panel_height - below - 16),
-        )
+        return max(40, width - 8), max(40, height - 8)
 
     def render_responsive_cover(self):
         self._cover_resize_after_id = None
@@ -3855,6 +3849,37 @@ class ProductGeneratorGUI:
         photo = ImageTk.PhotoImage(resized)
         self._product_photo = photo
         self.product_image_label.config(image=photo, text='')
+
+    def open_image_window(self, event=None):
+        """Zeigt das Produktbild in einem eigenen Fenster.
+
+        Die Bildspalte neben dem Entwurf ist zu schmal, um ein Foto zu
+        beurteilen. Hier wird es so gross gezeigt, wie der Bildschirm es
+        zulaesst - ohne die Vorlage ueber ihre eigene Aufloesung hinaus
+        aufzublasen.
+        """
+        image = self._product_image_original
+        if image is None or ImageTk is None:
+            return
+        window = tk.Toplevel(self.root)
+        window.title(TRANSLATIONS[self.language]['product_image_window'])
+        limit_width = max(320, window.winfo_screenwidth() - 160)
+        limit_height = max(240, window.winfo_screenheight() - 160)
+        width, height = image.size
+        scale = min(limit_width / width, limit_height / height, 1.0)
+        shown = image.resize(
+            (max(1, round(width * scale)), max(1, round(height * scale))),
+            Image.Resampling.LANCZOS,
+        )
+        photo = ImageTk.PhotoImage(shown)
+        label = ttk.Label(window, image=photo)
+        # Ohne eigene Referenz gibt Python das Bild frei und das Fenster
+        # bleibt leer - Tk haelt die Daten nicht selbst fest.
+        label.image = photo
+        label.pack()
+        window.bind('<Escape>', lambda _event: window.destroy())
+        label.bind('<Button-1>', lambda _event: window.destroy())
+        window.resizable(False, False)
 
     @staticmethod
     def extract_product_image_url(html, page_url):
@@ -3946,7 +3971,9 @@ class ProductGeneratorGUI:
     @classmethod
     def extract_product_image_urls(cls, html, page_url):
         """Extrahiert Hauptbild und Amazon-Galeriebilder in hoher Auflösung."""
-        primary = cls.extract_product_image_url(html, page_url)
+        primary = cls.large_image_url(cls.extract_product_image_url(
+            html, page_url
+        ))
         urls = [primary] if primary else []
         if not cls.host_has_label(page_url, 'amazon'):
             return urls
