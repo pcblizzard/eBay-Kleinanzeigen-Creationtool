@@ -1461,6 +1461,59 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class FakeWidget:
+    """Ersetzt ein Tk-Widget, damit die Rechnung ohne Fenster pruefbar ist."""
+
+    def __init__(self, width=0, height=0, req_height=0, managed=True):
+        self._width, self._height = width, height
+        self._req_height, self._managed = req_height, managed
+
+    def winfo_width(self):
+        return self._width
+
+    def winfo_height(self):
+        return self._height
+
+    def winfo_reqheight(self):
+        return self._req_height
+
+    def winfo_manager(self):
+        return 'pack' if self._managed else ''
+
+
+class CoverSpaceTests(unittest.TestCase):
+    """Der Platz fuer das Vorschaubild darf nicht am Bild selbst haengen."""
+
+    def build(self, width=250, height=600):
+        gui = ProductGeneratorGUI.__new__(ProductGeneratorGUI)
+        gui.cover_panel = FakeWidget(width=width, height=height)
+        gui.image_controls = FakeWidget(req_height=26)
+        gui.save_image_button = FakeWidget(req_height=26)
+        gui.own_images_frame = FakeWidget(req_height=180)
+        return gui
+
+    def test_the_height_comes_from_the_column_not_from_the_image(self):
+        space = ProductGeneratorGUI.cover_space(self.build())
+        # 600 - (26+6) - (26+6) - (180+6) - 16 = 334
+        self.assertEqual(space, (234, 334))
+
+    def test_an_unmeasured_window_is_reported_instead_of_guessed(self):
+        # Frueher wurde hier auf 60 Pixel ausgewichen - und das Bild blieb
+        # fuer den Rest der Sitzung so klein.
+        gui = self.build(width=1, height=1)
+        self.assertIsNone(ProductGeneratorGUI.cover_space(gui))
+
+    def test_hidden_controls_do_not_take_up_room(self):
+        gui = self.build()
+        gui.own_images_frame = FakeWidget(req_height=180, managed=False)
+        self.assertEqual(ProductGeneratorGUI.cover_space(gui)[1], 520)
+
+    def test_a_cramped_column_keeps_a_usable_minimum(self):
+        self.assertEqual(
+            ProductGeneratorGUI.cover_space(self.build(height=200))[1], 120
+        )
+
+
 class VariantMatchTests(unittest.TestCase):
     """Treffer derselben Modellreihe, die ein anderes Geraet sind."""
 

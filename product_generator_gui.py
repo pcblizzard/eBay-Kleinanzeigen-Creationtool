@@ -87,6 +87,11 @@ MODEL_MARKERS = frozenset("""
 pro max plus ultra mini xl xs se lite fold flip air nano edge neo
 """.split())
 
+# Wie stark eine kleine Bildvorlage fuer die Vorschau vergroessert werden
+# darf. Ohne Vergroesserung bleibt ein 150-Pixel-Bild in einer 240 Pixel
+# breiten Spalte unnoetig winzig; deutlich mehr als das Doppelte zerlaeuft.
+COVER_MAX_ZOOM = 2.0
+
 # Reihenfolge der Ergebnisliste: der beste Treffer zuerst, abweichende
 # Varianten zuletzt. Unbekannte Bewertungen landen in der Mitte.
 QUALITY_ORDER = {
@@ -3787,19 +3792,56 @@ class ProductGeneratorGUI:
             80, self.render_responsive_cover
         )
 
+    def cover_space(self):
+        """Der Platz, der dem Vorschaubild tatsaechlich zur Verfuegung steht.
+
+        Gemessen wird die Spalte abzueglich der Bedienelemente darunter -
+        nicht das Bildfeld selbst. Dessen Hoehe richtet sich naemlich nach
+        dem Bild, das darin liegt: ein kleines Bild ergab ein niedriges
+        Feld, das Feld begrenzte die naechste Skalierung, und das Bild blieb
+        dauerhaft winzig.
+
+        Gibt ``None`` zurueck, solange das Fenster noch nicht vermessen ist.
+        """
+        panel_width = self.cover_panel.winfo_width()
+        panel_height = self.cover_panel.winfo_height()
+        if panel_width <= 1 or panel_height <= 1:
+            return None
+        below = sum(
+            widget.winfo_reqheight() + 6
+            for widget in (
+                getattr(self, name, None) for name in
+                ('image_controls', 'save_image_button', 'own_images_frame')
+            )
+            if widget is not None and widget.winfo_manager()
+        )
+        return (
+            max(80, panel_width - 16),
+            max(120, panel_height - below - 16),
+        )
+
     def render_responsive_cover(self):
         self._cover_resize_after_id = None
         image = self._product_image_original
         if image is None or ImageTk is None:
             return
-        available_width = max(80, self.cover_panel.winfo_width() - 16)
-        available_height = max(
-            60, self.product_image_label.winfo_height() - 16
-        )
+        space = self.cover_space()
+        if space is None:
+            # Noch nicht vermessen - erneut versuchen, statt auf einen
+            # Notwert auszuweichen, der als Bildgroesse haengen bliebe.
+            self._cover_resize_after_id = self.root.after(
+                120, self.render_responsive_cover
+            )
+            return
+        available_width, available_height = space
         width, height = image.size
         if width <= 0 or height <= 0:
             return
-        scale = min(available_width / width, available_height / height)
+        # Kleine Vorlagen duerfen vergroessert werden, damit ueberhaupt
+        # etwas zu erkennen ist - aber nur maessig, sonst zerlaeuft das Bild.
+        scale = min(
+            available_width / width, available_height / height, COVER_MAX_ZOOM
+        )
         target = (
             max(1, round(width * scale)),
             max(1, round(height * scale)),
