@@ -3969,12 +3969,34 @@ class ProductGeneratorGUI:
         )
 
     @classmethod
+    def kleinanzeigen_gallery(cls, html, primary=''):
+        """Alle Fotos einer Kleinanzeigen-Anzeige, in ihrer Reihenfolge.
+
+        Die Galerie haengt an ``data-imgsrc``. Dieses Attribut tragen nur
+        die Bilder der Anzeige selbst - die Vorschaubilder empfohlener
+        Anzeigen weiter unten haben es nicht, weshalb hier nicht ueber alle
+        Bildadressen der Seite gesucht wird.
+
+        Jedes Foto steht zweimal darin, in zwei Groessenstufen; nach dem
+        Anheben auf die grosse Stufe bleibt je Foto ein Eintrag.
+        """
+        found = [
+            cls.large_image_url(html_lib.unescape(url))
+            for url in re.findall(r'data-imgsrc="([^"]+)"', html)
+        ]
+        if primary:
+            found.insert(0, primary)
+        return list(dict.fromkeys(url for url in found if url))
+
+    @classmethod
     def extract_product_image_urls(cls, html, page_url):
         """Extrahiert Hauptbild und Amazon-Galeriebilder in hoher Auflösung."""
         primary = cls.large_image_url(cls.extract_product_image_url(
             html, page_url
         ))
         urls = [primary] if primary else []
+        if cls.host_has_label(page_url, 'kleinanzeigen'):
+            return cls.kleinanzeigen_gallery(html, primary)
         if not cls.host_has_label(page_url, 'amazon'):
             return urls
 

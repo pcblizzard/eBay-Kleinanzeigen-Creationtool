@@ -1507,6 +1507,50 @@ class CoverSpaceTests(unittest.TestCase):
         self.assertIsNone(ProductGeneratorGUI.cover_space(gui))
 
 
+class KleinanzeigenGalleryTests(unittest.TestCase):
+    """Eine Anzeige mit sechs Fotos lieferte nur eines."""
+
+    IMG = "https://img.kleinanzeigen.de/api/v1/prod-ads/images/{}/{}?rule={}"
+    PAGE = "https://www.kleinanzeigen.de/s-anzeige/karaffe/3239166539-86-2144"
+
+    def markup(self):
+        # Jedes Foto steht zweimal in der Seite, in zwei Groessenstufen -
+        # genau wie in der echten Anzeige.
+        tags = "".join(
+            f'<img src="x" data-imgsrc="{self.IMG.format(key, key, rule)}"/>'
+            for key in ('00', 'e8', 'f8')
+            for rule in ('$_59.AUTO', '$_57.AUTO')
+        )
+        # Empfohlene fremde Anzeigen weiter unten tragen kein data-imgsrc.
+        return tags + '<img src="' + self.IMG.format(
+            'zz', 'zz', '$_59.AUTO'
+        ) + '"/>'
+
+    def test_every_photo_is_found_exactly_once(self):
+        found = ProductGeneratorGUI.kleinanzeigen_gallery(self.markup())
+        self.assertEqual(len(found), 3)
+        self.assertTrue(all(url.endswith('$_57.AUTO') for url in found))
+
+    def test_foreign_ads_on_the_same_page_are_not_included(self):
+        found = ProductGeneratorGUI.kleinanzeigen_gallery(self.markup())
+        self.assertFalse(any('/zz/' in url for url in found))
+
+    def test_the_main_photo_stays_first(self):
+        primary = self.IMG.format('f8', 'f8', '$_57.AUTO')
+        found = ProductGeneratorGUI.kleinanzeigen_gallery(
+            self.markup(), primary
+        )
+        self.assertEqual(found[0], primary)
+        # Es darf trotzdem nicht doppelt vorkommen.
+        self.assertEqual(found.count(primary), 1)
+        self.assertEqual(len(found), 3)
+
+    def test_an_ad_without_a_gallery_returns_nothing(self):
+        self.assertEqual(
+            ProductGeneratorGUI.kleinanzeigen_gallery("<html></html>"), []
+        )
+
+
 class LargeImageUrlTests(unittest.TestCase):
     """Kleinanzeigen nennt die kleinste Bildstufe; gebraucht wird die grosse.
 
