@@ -92,6 +92,11 @@ pro max plus ultra mini xl xs se lite fold flip air nano edge neo
 # breiten Spalte unnoetig winzig; deutlich mehr als das Doppelte zerlaeuft.
 COVER_MAX_ZOOM = 2.0
 
+# Groessenstufe der Kleinanzeigen-Bilder. Nachgemessen an einer echten
+# Anzeige: $_2.AUTO = 90x200, $_35.AUTO = 135x300, $_59.AUTO = 432x960,
+# $_57.AUTO = 720x1600. Die Schnittstelle nennt die kleinste Stufe.
+KLEINANZEIGEN_IMAGE_RULE = '$_57.AUTO'
+
 # Reihenfolge der Ergebnisliste: der beste Treffer zuerst, abweichende
 # Varianten zuletzt. Unbekannte Bewertungen landen in der Mitte.
 QUALITY_ORDER = {
@@ -3923,6 +3928,22 @@ class ProductGeneratorGUI:
         return ''
 
     @classmethod
+    def large_image_url(cls, url):
+        """Waehlt bei Kleinanzeigen die grosse Ausgabe eines Bildes.
+
+        Die Bilder liegen unter derselben Adresse in mehreren Groessen vor,
+        gesteuert ueber den Parameter ``rule``. Die Schnittstelle nennt
+        ``$_2.AUTO`` - das sind 90 x 200 Pixel und in der Vorschau nicht zu
+        erkennen. ``$_57.AUTO`` liefert dasselbe Bild mit 720 x 1600.
+        """
+        url = (url or '').strip()
+        if not url or not cls.host_is(url, 'img.kleinanzeigen.de'):
+            return url
+        return re.sub(
+            r'(?<=rule=)\$_\d+\.[A-Za-z]+', KLEINANZEIGEN_IMAGE_RULE, url
+        )
+
+    @classmethod
     def extract_product_image_urls(cls, html, page_url):
         """Extrahiert Hauptbild und Amazon-Galeriebilder in hoher Auflösung."""
         primary = cls.extract_product_image_url(html, page_url)
@@ -5198,7 +5219,9 @@ class ProductGeneratorGUI:
                         if isinstance(details, dict) else ''
                     ),
                     'image_urls': [
-                        image.get('url') or image.get('src')
+                        self.large_image_url(
+                            image.get('url') or image.get('src')
+                        )
                         for image in ad.get('images') or []
                         if isinstance(image, dict)
                         and (image.get('url') or image.get('src'))

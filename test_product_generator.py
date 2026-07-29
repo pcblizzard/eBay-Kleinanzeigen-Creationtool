@@ -1514,6 +1514,43 @@ class CoverSpaceTests(unittest.TestCase):
         )
 
 
+class LargeImageUrlTests(unittest.TestCase):
+    """Kleinanzeigen nennt die kleinste Bildstufe; gebraucht wird die grosse.
+
+    Die Groessen wurden an einer echten Anzeige nachgemessen:
+    $_2.AUTO = 90x200, $_57.AUTO = 720x1600 - dieselbe Aufnahme.
+    """
+
+    BASE = (
+        "https://img.kleinanzeigen.de/api/v1/prod-ads/images/00/"
+        "000f9ccf-76b0-4fcb-9036-ea4b033483c5?rule="
+    )
+
+    def test_every_small_step_is_raised(self):
+        for rule in ('$_2.AUTO', '$_35.AUTO', '$_59.AUTO', '$_59.JPG'):
+            with self.subTest(rule=rule):
+                self.assertEqual(
+                    ProductGeneratorGUI.large_image_url(self.BASE + rule),
+                    self.BASE + '$_57.AUTO',
+                )
+
+    def test_other_hosts_are_left_alone(self):
+        for url in (
+            "https://fremd.test/x?rule=$_2.AUTO",
+            "https://img.kleinanzeigen.de.fremd.test/x?rule=$_2.AUTO",
+            "https://m.media-amazon.com/images/I/71x._AC_SL1500_.jpg",
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(
+                    ProductGeneratorGUI.large_image_url(url), url
+                )
+
+    def test_an_address_without_the_parameter_stays_intact(self):
+        plain = "https://img.kleinanzeigen.de/api/v1/prod-ads/images/00/abc"
+        self.assertEqual(ProductGeneratorGUI.large_image_url(plain), plain)
+        self.assertEqual(ProductGeneratorGUI.large_image_url(None), '')
+
+
 class VariantMatchTests(unittest.TestCase):
     """Treffer derselben Modellreihe, die ein anderes Geraet sind."""
 
